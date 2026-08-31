@@ -131,7 +131,7 @@ subroutine derivs(icall,npart,nactive,xyzh,vxyzu,fxyzu,fext,divcurlv,divcurlB,&
 ! calculate density by direct summation
 !
 
- if (icall==1) then
+ if (icall==1 .and. npartoftype(idem) == 0) then
     call densityiterate(1,npart,nactive,xyzh,vxyzu,divcurlv,divcurlB,Bevol,&
                         stressmax,fxyzu,fext,alphaind,gradh,rad,radprop,dvdx,apr_level)
     if (.not. fast_divcurlB) then
@@ -156,10 +156,12 @@ subroutine derivs(icall,npart,nactive,xyzh,vxyzu,fxyzu,fext,divcurlv,divcurlB,&
     call do_timing('HII_region',tlast,tcpulast)
  endif
 
- if (gr) then
-    call cons2primall(npart,xyzh,metrics,pxyzu,vxyzu,dens,eos_vars)
- else
-    call cons2prim_everything(npart,xyzh,vxyzu,dvdx,rad,eos_vars,radprop,Bevol,Bxyz,dustevol,dustfrac,alphaind)
+ if (npartoftype(idem) == 0) then
+    if (gr) then
+       call cons2primall(npart,xyzh,metrics,pxyzu,vxyzu,dens,eos_vars)
+    else
+       call cons2prim_everything(npart,xyzh,vxyzu,dvdx,rad,eos_vars,radprop,Bevol,Bxyz,dustevol,dustfrac,alphaind)
+    endif
  endif
  call do_timing('cons2prim',tlast,tcpulast)
 

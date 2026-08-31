@@ -34,8 +34,8 @@ module setup
  integer :: np_apophis
  logical :: asteroids
  character(len=20) :: epoch,tmax_in,dtmax_in
- logical :: use_dem,apophis_only
-character(len=256) :: apophis_shape_file
+ logical :: use_dem,apophis_only,use_dem_as_sinks
+ character(len=256) :: apophis_shape_file
 
  real :: scale_vel
  real :: scale_pos
@@ -55,7 +55,7 @@ contains
 !----------------------------------------------------------------
 subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,time,fileprefix)
  use part,         only:nptmass,xyzmh_ptmass,vxyz_ptmass,idust,set_particle_type,&
-                        grainsize,graindens,ndustlarge,ndusttypes,ndustsmall,ihacc,igas
+                        grainsize,graindens,ndustlarge,ndusttypes,ndustsmall,ihacc,igas,idem
  use setbinary,     only:set_binary
  use units,         only:set_units,umass,udist,unit_density,unit_velocity,utime,in_code_units,in_units
  use physcon,       only:solarm,pi,au,km,solarr,ceresm,earthm,earthr,days
@@ -94,6 +94,7 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
  dtmax_in = '1 yr'
  asteroids = .true.
  np_apophis = 0
+ use_dem_as_sinks = .false.
  use_dem = .false.
  apophis_only = .false.
  add_mars_moons = .false.
@@ -236,7 +237,7 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
        !
        ! replace the sink particle with a ball of stuff
        !
-       call set_shape('closepacked',id,master,np_apophis,xyzmh_ptmass(1:3,nptmass),r_apophis,&
+       call set_shape('random',id,master,np_apophis,xyzmh_ptmass(1:3,nptmass),r_apophis,&
                       hfact,npart,xyzh,npart_total,objfile=apophis_shape_file)
        !call set_sphere('closepacked',id,master,0.,r_apophis,dx,hfact,npart,xyzh,npart_total,&
        !                xyz_origin=xyzmh_ptmass(1:3,nptmass),exactN=.true.,np_requested=np_apophis)
@@ -251,12 +252,21 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
        i_apophis_first = 0 !initialize apophis sink index range to 0 before know if DEM used
        i_apophis_last  = 0 !initialize apophis sink index range to 0 before know if DEM used
 
-       if (use_dem) then
+       if (use_dem_as_sinks) then
           call replace_gas_with_dem(id,npart,npartoftype(igas),massoftype(igas),&
                                     xyzh,vxyzu,nptmass,xyzmh_ptmass,vxyz_ptmass,hfact)
           isink_potential = 2
           i_apophis_first = nptmass - n_apophis_part + 1
           i_apophis_last  = nptmass
+       elseif (use_dem) then
+         print*, 'set_dem_regular'
+          massoftype(idem) = massoftype(igas)
+          npartoftype(idem) = npartoftype(igas)
+          massoftype(igas) = 0.
+          npartoftype(igas) = 0
+          do i=1,npart
+             call set_particle_type(i,idem)
+          enddo
        endif
 
        if (apophis_spin_period > 0.) then

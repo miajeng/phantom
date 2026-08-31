@@ -426,6 +426,7 @@ module part
 !         are not saved)
 !
  integer, parameter :: igas        = 1
+ integer, parameter :: idem        = 2
  integer, parameter :: iboundary   = 3
  integer, parameter :: istar       = 4
  integer, parameter :: idarkmatter = 5
@@ -439,7 +440,7 @@ module part
  logical            :: set_boundaries_to_active = .true.
  integer :: i
  character(len=7), dimension(maxtypes), parameter :: &
-   labeltype = (/'gas    ','empty  ','bound  ','star   ','darkm  ','bulge  ', &
+   labeltype = (/'gas    ','dem    ','bound  ','star   ','darkm  ','bulge  ', &
                  ('dust   ', i=idust,idustlast),&
                  ('dustbnd',i=idustbound,idustboundl)/)
 !

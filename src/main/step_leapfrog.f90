@@ -329,7 +329,9 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
        !
        ! make prediction for h
        !
-       xyzh(4,i) = xyzh(4,i) - dtsph*dhdrho(xyzh(4,i),pmassi)*rhoh(xyzh(4,i),pmassi)*divcurlv(1,i)
+       if (npartoftype(idem) == 0) then
+          xyzh(4,i) = xyzh(4,i) - dtsph*dhdrho(xyzh(4,i),pmassi)*rhoh(xyzh(4,i),pmassi)*divcurlv(1,i)
+       endif
        !
        ! make a prediction for v and u to the full step for use in the
        ! force evaluation. These have already been updated to the

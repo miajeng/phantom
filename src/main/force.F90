@@ -1289,7 +1289,6 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
     if (use_sinktree) is_neigh = is_neigh .and. (.not.sinkinpair)
 
     is_sph_neighbour: if (is_neigh) then
-
        if (rij2 > tiny(rij2)) then
           rij1 = 1./sqrt(rij2)
           qi   = (rij2*rij1)*hi1  ! this is qi = rij*hi1
@@ -1985,6 +1984,9 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
                    endif
                 endif
              endif
+          endif
+          if (iamtypei==idem .and. iamtypej==idem) then
+             call ssdem_force()
           endif
        endif ifgas
 
