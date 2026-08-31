@@ -23,8 +23,9 @@ module dem
  implicit none
  private
 
- public :: get_ssdem_force,dem_cohesion_summary
+ public :: get_ssdem_force,dem_cohesion_summary,get_dem_dt
 
+ real, public :: C_dem = 0.1          ! Safety factor on the contact timestep
  real, public :: ct_dem = 0.1         ! Tangential damping coefficient
  real, public :: epsilon_n_dem = 0.5  ! Normal coefficient of restitution (user-settable)
  real, public :: kn_cgs = 1e7         ! Spring constant (e.g. 10^4 kg/s^2 = 10^7 g/s^2)
@@ -117,6 +118,34 @@ subroutine get_ssdem_force(Rsinki,Rsinkj,mi,mj,ddr,dx,dy,dz,fx,fy,fz,veli,velj,w
  if (kn > 0.) dtmin = min(dtmin,sqrt(reduced_mass/kn))
 
 end subroutine get_ssdem_force
+
+!----------------------------------------------------------------
+!+
+!  Global timestep constraint from the DEM contact springs.
+!
+!  The pairwise constraint applied in get_ssdem_force is
+!  sqrt(reduced_mass/kn), with reduced_mass = mi*mj/(mi+mj). That is
+!  smallest when both particles are the lightest in the run, giving
+!  reduced_mass = m_min/2. The stiffest pair is therefore bounded by
+!  the smallest particle mass alone, so this constraint is global: it
+!  needs no per-pair reduction and is identical on every MPI rank.
+!
+!  Returns huge() when DEM is inactive so it never limits the step.
+!+
+!----------------------------------------------------------------
+real function get_dem_dt(mass_dem)
+ use units, only:umass,utime
+ real, intent(in) :: mass_dem
+ real :: kn_dem
+
+ kn_dem = kn_cgs / (umass/utime**2)
+ if (kn_dem > 0. .and. mass_dem > 0.) then
+    get_dem_dt = C_dem*sqrt(0.5*mass_dem/kn_dem)
+ else
+    get_dem_dt = huge(0.)
+ endif
+
+end function get_dem_dt
 
 !----------------------------------------------------------------
 !+

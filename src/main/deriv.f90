@@ -56,7 +56,8 @@ subroutine derivs(icall,npart,nactive,xyzh,vxyzu,fxyzu,fext,divcurlv,divcurlB,&
  use timing,         only:get_timings
  use forces,         only:force
  use part,           only:mhd,gradh,alphaind,igas,iradxi,ifluxx,ifluxy,ifluxz,ithick,&
-                          idem,npartoftype
+                          idem,npartoftype,massoftype
+ use dem,            only:get_dem_dt
  use derivutils,     only:do_timing
  use cons2prim,      only:cons2primall,cons2prim_everything
  use metric_tools,   only:init_metric
@@ -229,6 +230,12 @@ subroutine derivs(icall,npart,nactive,xyzh,vxyzu,fxyzu,fext,divcurlv,divcurlB,&
  else
     dtnew = min(dtforce,dtcourant,dtrad,dtmax)
  endif
+!
+! DEM contact springs are stiff and impose their own timestep, which the
+! SPH Courant/force conditions know nothing about. Applied here so it
+! covers both the individual- and global-timestep branches above.
+!
+ if (npartoftype(idem) > 0) dtnew = min(dtnew,get_dem_dt(massoftype(idem)))
 
  call do_timing('total',t1,tcpu1,lunit=iprint)
 

@@ -1226,7 +1226,7 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
     gradP_coolj=0.
  endif
 
- spin_dem = 0.   ! DEM particles have no spin storage yet (see step 4)
+ spin_dem = 0.   ! DEM particles have no spin storage yet
  dtdem    = bignumber
 
  loop_over_neighbours2: do n = 1,nneigh
@@ -1996,7 +1996,9 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
              !  Three placeholders remain, each removed by a later step:
              !    radius : taken as h/2 here; step 3 adds a per-particle radius array
              !    spin   : zero, as DEM particles have no spin storage yet
-             !    dtdem  : computed but discarded; step 4 feeds it into the timestep
+             !    dtdem  : discarded here; the contact timestep is applied
+             !             globally in derivs via get_dem_dt, since it depends
+             !             only on the smallest particle mass and kn
              !
              Ri_dem   = 0.5*hi
              Rj_dem   = 0.5/hj1
