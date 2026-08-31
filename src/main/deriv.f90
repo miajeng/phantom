@@ -55,7 +55,8 @@ subroutine derivs(icall,npart,nactive,xyzh,vxyzu,fxyzu,fext,divcurlv,divcurlB,&
  use ptmass_radiation, only:get_dust_temperature
  use timing,         only:get_timings
  use forces,         only:force
- use part,           only:mhd,gradh,alphaind,igas,iradxi,ifluxx,ifluxy,ifluxz,ithick
+ use part,           only:mhd,gradh,alphaind,igas,iradxi,ifluxx,ifluxy,ifluxz,ithick,&
+                          idem,npartoftype
  use derivutils,     only:do_timing
  use cons2prim,      only:cons2primall,cons2prim_everything
  use metric_tools,   only:init_metric

@@ -924,7 +924,8 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
  use kernel,      only:grkern,cnormk,radkern2
  use part,        only:igas,idust,isink,iohm,ihall,iambi,maxphase,iactive,xyzmh_ptmass,&
                        iamtype,iamdust,get_partinfo,mhd,maxvxyzu,maxdvdx,igasP,ics,iradP,itemp,&
-                       ihsoft
+                       ihsoft,idem
+ use dem,         only:get_ssdem_force
  use dim,         only:maxalpha,maxp,mhd_nonideal,gravity,gr,use_apr,isothermal,use_sinktree,disc_viscosity,track_lum
  use part,        only:rhoh,dvdx,aprmassoftype,shortsinktree
  use nicil,       only:nimhd_get_jcbcb,nimhd_get_dBdt
@@ -1034,6 +1035,7 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
  real    :: alphai,grainmassi,graindensi,filfaci
  logical :: usej
  integer :: iamtypei
+ real    :: veli_dem(3),velj_dem(3),spin_dem(3),Ri_dem,Rj_dem,dtdem
  real    :: radFi(3),radFj(3),radRj,radDFWi,radDFWj,c_code,radkappai,radkappaj,&
             radDi,radDj,radeni,radenj,radlambdai,radlambdaj
  real    :: xi,yi,zi,densi,eni,metrici(0:3,0:3,2)
@@ -1223,6 +1225,9 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
     gradP_cooli=0.
     gradP_coolj=0.
  endif
+
+ spin_dem = 0.   ! DEM particles have no spin storage yet (see step 4)
+ dtdem    = bignumber
 
  loop_over_neighbours2: do n = 1,nneigh
 
@@ -1986,7 +1991,20 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
              endif
           endif
           if (iamtypei==idem .and. iamtypej==idem) then
-             call ssdem_force()
+             !
+             !--soft-sphere DEM contact force between two DEM particles.
+             !  Three placeholders remain, each removed by a later step:
+             !    radius : taken as h/2 here; step 3 adds a per-particle radius array
+             !    spin   : zero, as DEM particles have no spin storage yet
+             !    dtdem  : computed but discarded; step 4 feeds it into the timestep
+             !
+             Ri_dem   = 0.5*hi
+             Rj_dem   = 0.5/hj1
+             veli_dem = (/vxi,vyi,vzi/)
+             velj_dem = (/vxj,vyj,vzj/)
+             call get_ssdem_force(Ri_dem,Rj_dem,pmassi,pmassj,rij1,dx,dy,dz,&
+                                  fsum(ifxi),fsum(ifyi),fsum(ifzi),&
+                                  veli_dem,velj_dem,spin_dem,spin_dem,dtdem)
           endif
        endif ifgas
 

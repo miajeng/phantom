@@ -99,6 +99,7 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
                           rad,drad,radprop,isdead_or_accreted,rhoh,dhdrho,&
                           iphase,iamtype,massoftype,maxphase,igas,idust,mhd,&
                           iamboundary,get_ntypes,npartoftypetot,apr_level,&
+                          idem,npartoftype,&
                           dustfrac,dustevol,ddustevol,eos_vars,alphaind,nptmass,&
                           dustprop,ddustprop,dustproppred,pxyzu,dens,metrics,ics,&
                           filfac,filfacpred,mprev,filfacprev,aprmassoftype,&
@@ -147,6 +148,7 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
  logical, parameter :: allow_waking = .true.
  integer, parameter :: maxits = 30
  logical            :: converged,store_itype
+ logical            :: dem_active
 
 !
 ! set initial quantities
@@ -284,6 +286,13 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
 
  timei = timei + dtsph
  nvfloorps  = 0
+!
+! DEM particles carry no SPH density, so the smoothing-length prediction
+! below is skipped entirely when any are present. Evaluated once here so
+! the hot loop does not re-read the array (and so it can be shared cleanly
+! into the OpenMP region).
+!
+ dem_active = (npartoftype(idem) > 0)
 
 !----------------------------------------------------
 ! interpolation of SPH quantities needed in the SPH
@@ -299,6 +308,7 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
 !$omp shared(alphaind,alphamax,ialphaloc) &
 !$omp shared(eos_vars,ufloor,icooling,Tfloor) &
 !$omp shared(twas,timei) &
+!$omp shared(dem_active) &
 !$omp shared(rad,drad,radpred)&
 !$omp private(hi,rhoi,tdecay1,source,ddenom,hdti) &
 !$omp private(i,spsoundi,alphaloci) &
@@ -329,7 +339,7 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
        !
        ! make prediction for h
        !
-       if (npartoftype(idem) == 0) then
+       if (.not.dem_active) then
           xyzh(4,i) = xyzh(4,i) - dtsph*dhdrho(xyzh(4,i),pmassi)*rhoh(xyzh(4,i),pmassi)*divcurlv(1,i)
        endif
        !
