@@ -45,3 +45,29 @@ and the office PC can never collide when they end up in the same Drive folder.
 - `hfact = 1.000` is correct here (M_6 quintic kernel, hfact_default = 1.0).
 - Use the energy-based unbound-mass analysis, not FoF clustering — FoF flips
   between 0 and exactly 50% on intact bodies.
+
+## The epoch trap (found 2026-09-02 — read this)
+
+`epoch` must NOT contain a time-of-day. PHANTOM pastes it straight into the JPL
+Horizons URL without escaping, so a space truncates the query and Horizons
+replies `Bad dates -- start must be earlier than stop`. The download then
+contains no `$$SOE` block, every body fails with `set_binary: semi-major axis =
+0`, and setup aborts — **unless** stale `*.txt` ephemeris files happen to be
+sitting in the run directory, in which case PHANTOM silently uses those instead
+and never tells you the epoch you asked for was ignored.
+
+Verified behaviour with `phantomsetup`:
+
+| epoch in .setup         | ephemeris actually used | pericentre        |
+|-------------------------|-------------------------|-------------------|
+| `2029-04-11 00:00:01`   | whatever `*.txt` exists | (silently varies) |
+| `2029-04-11`            | 2029-Apr-11 (fresh)     | 3.625e4 km / 5.69 R⊕ |
+| `2029-04-13`            | 2029-Apr-13 (fresh)     | 3.795e4 km / 5.96 R⊕ |
+
+The thesis figure of **5.96 R⊕** corresponds to **2029-04-13**, which is the
+actual date of closest approach. The templates here are therefore set to
+`2029-04-13`, which reproduces the published numbers exactly and now does so on
+any machine with no cache files present.
+
+**Start every new run directory clean** — do not copy old `*.txt` ephemeris
+files into it. Let PHANTOM download them fresh.

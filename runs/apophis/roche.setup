@@ -3,7 +3,7 @@
             dtmax_in =        10 min    ! time between dumps
            asteroids =           F    ! add distant minor bodies as km-sized dust particles
           np_apophis =           1000    ! DEM particle count (converged from resolution test)
-               epoch =  2029-04-11 00:00:01    ! epoch for ephemeris
+               epoch =  2029-04-13    ! epoch for ephemeris (NO time-of-day: a space breaks the Horizons URL)
              use_dem =           T   ! discrete element method
         apophis_only =           F    ! MUST be F: Earth must be present for tidal Roche study
       add_mars_moons =           F    ! add Phobos and Deimos as point masses
