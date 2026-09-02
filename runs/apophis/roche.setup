@@ -1,0 +1,19 @@
+# Roche-limit sweep template (Earth present, no spin, no cohesion in .in)
+             tmax_in =     12 hrs  ! end time of simulation
+            dtmax_in =        10 min    ! time between dumps
+           asteroids =           F    ! add distant minor bodies as km-sized dust particles
+          np_apophis =           1000    ! DEM particle count (converged from resolution test)
+               epoch =  2029-04-11 00:00:01    ! epoch for ephemeris
+             use_dem =           T   ! discrete element method
+        apophis_only =           F    ! MUST be F: Earth must be present for tidal Roche study
+      add_mars_moons =           F    ! add Phobos and Deimos as point masses
+           scale_vel =       1.000    ! scaling factor for apophis velocity
+           scale_pos =       1.000    ! heliocentric position scale (leave 1; use scale_earth_sep)
+     scale_earth_sep =       1.000    ! scale geocentric Earth–Apophis distance (1 = ephemeris)
+     scale_r_apophis =       1.000    ! scaling factor for apophis radius
+           scale_rho =       1.000    ! scaling factor for apophis bulk density
+  apophis_shape_file =  apophis.shape   ! or itokawa.shape
+ apophis_spin_period =       0.000    ! 0 = no spin (Roche baseline)
+ apophis_spin_axis_x =       0.000    ! spin axis (unused when period=0)
+ apophis_spin_axis_y =       0.000    !
+ apophis_spin_axis_z =       1.000    !
