@@ -2000,8 +2000,8 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
              !             globally in derivs via get_dem_dt, since it depends
              !             only on the smallest particle mass and kn
              !
-             Ri_dem   = 0.5*hi
-             Rj_dem   = 0.5/hj1
+             Ri_dem   = 2.*hi
+             Rj_dem   = 2./hj1
              veli_dem = (/vxi,vyi,vzi/)
              velj_dem = (/vxj,vyj,vzj/)
              call get_ssdem_force(Ri_dem,Rj_dem,pmassi,pmassj,rij1,dx,dy,dz,&

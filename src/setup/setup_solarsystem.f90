@@ -237,7 +237,7 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
        !
        ! replace the sink particle with a ball of stuff
        !
-       call set_shape('random',id,master,np_apophis,xyzmh_ptmass(1:3,nptmass),r_apophis,&
+       call set_shape('closepacked',id,master,np_apophis,xyzmh_ptmass(1:3,nptmass),r_apophis,&
                       hfact,npart,xyzh,npart_total,objfile=apophis_shape_file)
        !call set_sphere('closepacked',id,master,0.,r_apophis,dx,hfact,npart,xyzh,npart_total,&
        !                xyz_origin=xyzmh_ptmass(1:3,nptmass),exactN=.true.,np_requested=np_apophis)
@@ -266,6 +266,7 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
           npartoftype(igas) = 0
           do i=1,npart
              call set_particle_type(i,idem)
+             xyzh(4,i) = xyzh(4,i) /hfact * 0.5 !set radius = to original particle spacing
           enddo
        endif
 
