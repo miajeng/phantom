@@ -276,7 +276,6 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
           i_apophis_first = nptmass - n_apophis_part + 1
           i_apophis_last  = nptmass
        elseif (use_dem) then
-         print*, 'set_dem_regular'
           massoftype(idem) = massoftype(igas)
           npartoftype(idem) = npartoftype(igas)
           massoftype(igas) = 0.
@@ -289,7 +288,7 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
 
        if (apophis_spin_period > 0.) then
           call set_apophis_spin(id,apophis_spin_period,apophis_spin_axis,m_apophis,r_apophis,&
-                                use_dem,n_apophis_part,i_apophis_first,i_apophis_last,&
+                                use_dem_as_sinks,n_apophis_part,i_apophis_first,i_apophis_last,&
                                 xyzh,vxyzu,xyzmh_ptmass,vxyz_ptmass)
        endif
        !
@@ -319,7 +318,7 @@ end subroutine setpart
 !  impose solid-body spin on Apophis (SPH or DEM particles)
 !+
 !----------------------------------------------------------------
-subroutine set_apophis_spin(id,period_s,spin_axis_in,m_body,r_body,use_dem,n_gas,&
+subroutine set_apophis_spin(id,period_s,spin_axis_in,m_body,r_body,dem_as_sinks,n_gas,&
                             i_sink_first,i_sink_last,xyzh,vxyzu,xyzmh_ptmass,vxyz_ptmass)
  use part,        only:ispinx,ispiny,ispinz,iReff
  use units,       only:utime
@@ -328,7 +327,7 @@ subroutine set_apophis_spin(id,period_s,spin_axis_in,m_body,r_body,use_dem,n_gas
  use vectorutils, only:cross_product3D,unitvec,mag
  integer, intent(in) :: id,i_sink_first,i_sink_last,n_gas
  real,    intent(in) :: period_s,spin_axis_in(3),m_body,r_body
- logical, intent(in) :: use_dem
+ logical, intent(in) :: dem_as_sinks
  real,    intent(inout) :: xyzh(:,:),vxyzu(:,:),xyzmh_ptmass(:,:),vxyz_ptmass(:,:)
  real :: omega,omega_crit,period_crit_s,spin_axis(3),spin_vec(3),r_cm(3),r_rel(3),dv(3)
  real :: pmass,reff
@@ -344,7 +343,7 @@ subroutine set_apophis_spin(id,period_s,spin_axis_in,m_body,r_body,use_dem,n_gas
 
  r_cm = 0.
  pmass = 0.
- if (use_dem) then
+ if (dem_as_sinks) then
     n = i_sink_last - i_sink_first + 1
     do i=i_sink_first,i_sink_last
        pmass = pmass + xyzmh_ptmass(4,i)
@@ -357,14 +356,14 @@ subroutine set_apophis_spin(id,period_s,spin_axis_in,m_body,r_body,use_dem,n_gas
     enddo
  endif
  if (n > 0) then
-    if (use_dem) then
+    if (dem_as_sinks) then
        r_cm = r_cm/pmass
     else
        r_cm = r_cm/real(n)
     endif
  endif
 
- if (use_dem) then
+ if (dem_as_sinks) then
     do i=i_sink_first,i_sink_last
        r_rel = xyzmh_ptmass(1:3,i) - r_cm
        call cross_product3D(spin_vec,r_rel,dv)
@@ -504,7 +503,8 @@ subroutine write_setupfile(filename)
  call write_inopt(np_apophis,'np_apophis','number of particles used to represent apophis (0=none; 1=sink; n=gas)',iunit)
  call write_inopt(epoch,'epoch','epoch to query ephemeris, YYYY-MMM-DD HH:MM:SS.fff, blank = today',iunit)
 
- call write_inopt(use_dem,'use_dem','use the discrete element method for sink-sink interactions',iunit)
+ call write_inopt(use_dem,'use_dem','represent apophis with DEM particles (contact forces via the neighbour tree)',iunit)
+ call write_inopt(use_dem_as_sinks,'use_dem_as_sinks','legacy: represent apophis with DEM sink particles (all-pairs, slow)',iunit)
  call write_inopt(apophis_only,'apophis_only','only add apophis',iunit)
  call write_inopt(add_mars_moons,'add_mars_moons','add Phobos and Deimos as point masses',iunit)
 
@@ -549,6 +549,7 @@ subroutine read_setupfile(filename,ierr)
  call read_inopt(epoch,'epoch',db,errcount=nerr)
 
  call read_inopt(use_dem,'use_dem',db,errcount=nerr)
+ call read_inopt(use_dem_as_sinks,'use_dem_as_sinks',db,default=.false.,errcount=nerr)
  call read_inopt(apophis_only,'apophis_only',db,errcount=nerr)
  call read_inopt(add_mars_moons,'add_mars_moons',db,errcount=nerr)
 
