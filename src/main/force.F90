@@ -1994,14 +1994,14 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
              !
              !--soft-sphere DEM contact force between two DEM particles.
              !  Three placeholders remain, each removed by a later step:
-             !    radius : taken as h/2 here; step 3 adds a per-particle radius array
+             !    radius : taken as R=h here, with h = delta/2 in setup; step 3 adds a per-particle radius array
              !    spin   : zero, as DEM particles have no spin storage yet
              !    dtdem  : discarded here; the contact timestep is applied
              !             globally in derivs via get_dem_dt, since it depends
              !             only on the smallest particle mass and kn
              !
-             Ri_dem   = 2.*hi
-             Rj_dem   = 2./hj1
+             Ri_dem   = hi
+             Rj_dem   = 1./hj1
              veli_dem = (/vxi,vyi,vzi/)
              velj_dem = (/vxj,vyj,vzj/)
              call get_ssdem_force(Ri_dem,Rj_dem,pmassi,pmassj,rij1,dx,dy,dz,&
