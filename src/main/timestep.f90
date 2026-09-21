@@ -39,6 +39,9 @@ module timestep
 
  real, parameter :: bignumber = 1.e29
 
+ ! DEM contact-spring timestep constraint (set in derivs; bignumber = inactive)
+ real :: dtdem = bignumber
+
  public :: write_options_timestep, read_options_timestep
 
 contains
@@ -98,6 +101,8 @@ subroutine print_dtlog(iprint,time,dt,dtforce,dtcourant,dterr,dtmax,&
     write(iprint,10) time,dt,'(dtinject)'//trim(str)
  elseif (abs(dt-dtrad) < tiny(dt)) then
     write(iprint,10) time,dt,'(radiation)'//trim(str)
+ elseif (abs(dt-dtdem) < tiny(dt)) then
+    write(iprint,10) time,dt,'(dem contact)'//trim(str)
  else
     !print*,dt,dtforce,dtcourant,dterr,dtmax
     write(iprint,10) time,dt,'(unknown)'//trim(str)

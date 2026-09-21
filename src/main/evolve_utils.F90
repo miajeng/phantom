@@ -44,7 +44,7 @@ subroutine update_time_and_dt(nsteps,time,dtmax,dtmaxold,rhomaxnow,tlast,tcheck,
  use io_control,    only:at_simulation_end
  use dynamic_dtmax, only:dtmax_ifactor
  use mpiutils,      only:bcast_mpi,reduceall_mpi
- use timestep,      only:dtrad,dtforce,dtinject,dtcourant,dterr,print_dtlog,tmax
+ use timestep,      only:dtrad,dtforce,dtinject,dtcourant,dterr,print_dtlog,tmax,dtdem
  use timestep_ind,  only:print_dtind_efficiency,update_time_per_bin,print_dtlog_ind,change_nbinmax,&
                          nactivetot,nbinmax
  integer,         intent(inout) :: nsteps
@@ -97,7 +97,7 @@ subroutine update_time_and_dt(nsteps,time,dtmax,dtmaxold,rhomaxnow,tlast,tcheck,
     ! Following redefinitions are to avoid crashing if dtprint = 0 & to reach next output while avoiding round-off errors
     dtprint = min(tprint,tmax) - time + epsilon(dtmax)
     if (dtprint <= epsilon(dtmax) .or. dtprint >= (1.0-1e-8)*dtmax ) dtprint = dtmax + epsilon(dtmax)
-    dt = min(dtforce,dtcourant,dterr,dtmax+epsilon(dtmax),dtprint,dtinject,dtrad)
+    dt = min(dtforce,dtcourant,dterr,dtmax+epsilon(dtmax),dtprint,dtinject,dtrad,dtdem)
 !
 !--write log every step (NB: must print after dt has been set in order to identify timestep constraint)
 !

@@ -48,7 +48,7 @@ subroutine derivs(icall,npart,nactive,xyzh,vxyzu,fxyzu,fext,divcurlv,divcurlB,&
  use part,           only:dustgasprop,Vrel_disp,dvdx,Bxyz,set_boundaries_to_active,&
                           nptmass,xyzmh_ptmass,sinks_have_heating,dust_temp,VrelVf,fxyz_drag
  use timestep_ind,   only:nbinmax
- use timestep,       only:dtmax,dtcourant,dtforce,dtrad
+ use timestep,       only:dtmax,dtcourant,dtforce,dtrad,dtdem
  use forcing,        only:forceit
  use growth,           only:get_growth_rate
  use porosity,         only:get_disruption,get_probastick
@@ -235,7 +235,10 @@ subroutine derivs(icall,npart,nactive,xyzh,vxyzu,fxyzu,fext,divcurlv,divcurlB,&
 ! SPH Courant/force conditions know nothing about. Applied here so it
 ! covers both the individual- and global-timestep branches above.
 !
- if (npartoftype(idem) > 0) dtnew = min(dtnew,get_dem_dt(massoftype(idem)))
+ if (npartoftype(idem) > 0) then
+    dtdem = get_dem_dt(massoftype(idem))
+    dtnew = min(dtnew,dtdem)
+ endif
 
  call do_timing('total',t1,tcpu1,lunit=iprint)
 
