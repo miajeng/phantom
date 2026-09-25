@@ -137,8 +137,13 @@ real function get_dem_dt(mass_dem)
  use units, only:umass,utime
  real, intent(in) :: mass_dem
  real :: kn_dem
-
- kn_dem = kn_cgs / (umass/utime**2)
+ !
+ ! The stiffest spring in the problem sets the step, and there are two:
+ ! the normal contact spring kn and the tensile cohesion spring kt, both
+ ! applied in get_ssdem_force. Using kn alone silently under-resolves any
+ ! run with kt > kn, which is exactly what a cohesion sweep reaches for.
+ !
+ kn_dem = max(kn_cgs,kt_cgs) / (umass/utime**2)
  if (kn_dem > 0. .and. mass_dem > 0.) then
     get_dem_dt = C_dem*sqrt(0.5*mass_dem/kn_dem)
  else

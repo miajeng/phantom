@@ -2588,11 +2588,20 @@ subroutine write_options_ptmass(iunit)
  use subgroup,     only:r_neigh
  use dim,          only:use_sinktree
  use dem,          only:kn_cgs,epsilon_n_dem,ct_dem,kt_cgs,coh_gap_max_cgs
+ use part,         only:npartoftype,idem
  integer, intent(in) :: iunit
 
  write(iunit,"(/,a)") '# options controlling sink particles'
  call write_inopt(isink_potential,'isink_potential','sink potential (0=1/r,1=surf,2=dem)',iunit)
- if (isink_potential == 2) then
+ !
+ ! The DEM contact parameters are shared by both routes to DEM: the legacy
+ ! sink-sink one (isink_potential=2) and DEM particles of type idem. Gating
+ ! them on isink_potential alone left them out of the .in for every particle
+ ! run, so kn, cohesion and restitution silently kept their compiled-in
+ ! defaults and could not be swept. The read side is already unguarded and
+ ! defaulted, so widening this costs nothing and old .in files still work.
+ !
+ if (isink_potential == 2 .or. npartoftype(idem) > 0) then
     call write_inopt(kn_cgs,'kn_cgs','DEM normal spring constant (g/s^2 per cm overlap)',iunit)
     call write_inopt(epsilon_n_dem,'epsilon_n_dem','DEM normal coefficient of restitution [0=inelastic,1=elastic]',iunit)
     call write_inopt(ct_dem,'ct_dem','DEM tangential damping coefficient',iunit)
