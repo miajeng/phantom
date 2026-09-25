@@ -46,6 +46,10 @@ module setup
  real :: apophis_spin_period
  real :: apophis_spin_axis(3)
 
+ logical :: pack_settle
+ real :: pack_expand
+ real :: pack_phi
+
  private
 
 contains
@@ -59,14 +63,15 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
                         grainsize,graindens,ndustlarge,ndusttypes,ndustsmall,ihacc,igas,idem
  use setbinary,     only:set_binary
  use units,         only:set_units,umass,udist,unit_density,unit_velocity,utime,in_code_units,in_units
- use physcon,       only:solarm,pi,au,km,solarr,ceresm,earthm,earthr,days
+ use physcon,       only:solarm,pi,au,km,solarr,ceresm,earthm,earthr,days,gg
  use io,            only:master,fatal,warning
  use timestep,      only:tmax,dtmax
+ use damping,     only:idamp,tdyn_s
  use centreofmass,  only:reset_centreofmass
  use setsolarsystem,only:set_minor_planets,add_sun_and_planets,add_body
  use kernel,        only:hfact_default
  use eos_tillotson, only:rho_0,A
- use shape,         only:set_shape
+ use shape,         only:set_shape,get_mesh_geometry
  use options,       only:ieos
  use setup_params,  only:npart_total
  use orbits,        only:get_pericentre_distance,get_eccentricity
@@ -85,7 +90,8 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
  integer, parameter :: iearth = 4  ! Earth sink index when apophis_only=F
  !integer :: values(8),year,month,day
  real    :: period,semia,mtot,dx
- real    :: r_apophis,m_apophis,vol_apophis,rtidal,spsoundmin
+ real    :: r_apophis,m_apophis,vol_apophis,rtidal,spsoundmin,r_grain,r_circ,r_cloud
+ integer :: ierr_mesh,n_settle
  real    :: dr(3),sep_km,sep_re,rperi,rperi_km,rperi_re,ecc,vrel_kms
  real    :: dv(3)
 !
@@ -112,6 +118,13 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
  apophis_shape_file='apophis.shape'
  apophis_spin_period = 0.
  apophis_spin_axis   = (/ 0., 0., 1. /)
+ pack_settle = .false.
+ pack_expand = 1.8
+ pack_phi    = 0.64
+ r_grain     = 0.
+ r_circ      = 0.
+ r_cloud     = 0.
+ n_settle    = 0
 !
 ! read runtime parameters from setup file
 !
@@ -230,8 +243,43 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
     !
     vol_apophis = 4./3.*pi*r_apophis**3
     if (np_apophis > 1) then
-       call set_shape('closepacked',id,master,np_apophis,xyzmh_ptmass(1:3,nptmass),r_apophis,&
-                      hfact,npart,xyzh,npart_total,objfile=apophis_shape_file,vol=vol_apophis)
+       if (pack_settle) then
+          !
+          ! The body's volume is the SHAPE's volume, not a sphere's and not the
+          ! cloud's: it fixes the mass and hence the bulk density. Taken exactly
+          ! from the mesh here (divergence theorem), with no lattice probe.
+          !
+          call get_mesh_geometry(apophis_shape_file,r_apophis,vol_apophis,r_circ,&
+                                 ierr_mesh,id,master)
+          if (ierr_mesh /= 0) call warning('apophis',&
+             'could not read shape for settling: falling back to a sphere of r_apophis')
+          !
+          ! The settled body must ENCLOSE the shape or the later crop truncates
+          ! it, so the settle target is the circumradius, not r_apophis. Holding
+          ! the grain radius fixed, that needs more grains than the shape alone
+          ! will keep: n_settle/n_kept = V_sphere(r_circ)/V_shape.
+          !
+          r_grain = (3.*pack_phi*vol_apophis/(4.*pi*real(np_apophis)))**(1./3.)
+          !
+          ! 10% more grains than the circumscribing sphere needs exactly. Two
+          ! things make the settled body come out smaller than the arithmetic
+          ! says, and both shrink the radius: set_shape only matches the
+          ! requested count to within a few per cent, and a settled random
+          ! packing does not land exactly on pack_phi (0.66 measured against
+          ! 0.64 assumed, which is a denser and so smaller body). 10% on the
+          ! count is ~3% on the radius, which covers both. Costs a few per
+          ! cent of settling time; the alternative is clipping the tips off
+          ! the shape, which moddump_cropshape can only warn about.
+          !
+          n_settle = nint(1.10*np_apophis*(4./3.*pi*r_circ**3)/vol_apophis)
+          r_cloud = pack_expand*r_circ
+          call set_shape('random',id,master,n_settle,xyzmh_ptmass(1:3,nptmass),&
+                         r_cloud,hfact,npart,xyzh,npart_total,&
+                         objfile=apophis_shape_file,sphere_radius=r_cloud)
+       else
+          call set_shape('closepacked',id,master,np_apophis,xyzmh_ptmass(1:3,nptmass),r_apophis,&
+                         hfact,npart,xyzh,npart_total,objfile=apophis_shape_file,vol=vol_apophis)
+       endif
     endif
     !
     ! fix either the mass (mass_apophis > 0) or the density (scale_rho); the other follows from the volume
@@ -263,7 +311,23 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
        do i=1,npart
           vxyzu(1:3,i) = vxyz_ptmass(1:3,nptmass)
        enddo
-       massoftype(igas) = m_apophis / npart
+       if (pack_settle) then
+          !
+          ! In settling mode the grain, not the body, is the physical object:
+          ! its mass follows from its size and the grain material density, and
+          ! must not change when the body is later cropped. So divide the body
+          ! mass by the count the SHAPE will keep, not by the larger settling
+          ! count. Dividing by npart instead would give every grain 1/2.4 of
+          ! its proper density during the settle and then jump it back at the
+          ! crop. A side effect worth having: the settling sphere then carries
+          ! more than the body mass, but at the correct bulk density, so its
+          ! dynamical time matches the final body's and tdyn_s is the same
+          ! number for both settles.
+          !
+          massoftype(igas) = m_apophis / np_apophis
+       else
+          massoftype(igas) = m_apophis / npart
+       endif
        npartoftype(igas) = npart
        nptmass = nptmass - 1
        i_apophis_first = 0 !initialize apophis sink index range to 0 before know if DEM used
@@ -280,10 +344,50 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
           npartoftype(idem) = npartoftype(igas)
           massoftype(igas) = 0.
           npartoftype(igas) = 0
-          do i=1,npart
-             call set_particle_type(i,idem)
-             xyzh(4,i) = xyzh(4,i) /hfact * 0.5 !set radius = to original particle spacing
-          enddo
+          if (pack_settle) then
+             !
+             ! r_grain was fixed above from the SHAPE volume and the requested
+             ! kept-particle count, so that np_apophis grains fill the shape at
+             ! pack_phi once the body has been cropped. It must NOT be re-derived
+             ! from npart here: npart is the larger settling count, and it must
+             ! not come from the cloud spacing, which is pack_expand times too
+             ! large. h is both the grain radius and the neighbour search radius
+             ! and is held fixed through settling (step_leapfrog skips h
+             ! evolution when DEM particles are present).
+             !
+             do i=1,npart
+                call set_particle_type(i,idem)
+                xyzh(4,i) = r_grain
+             enddo
+             !
+             ! Settling needs damping, so set it here rather than making the
+             ! user know to add it by hand: write_options_damping returns
+             ! early when idamp==0, so phantomsetup would otherwise never
+             ! write the block and a fresh .in would silently run undamped.
+             ! idamp=2 takes a dynamical time in seconds and scales itself,
+             ! which is what we want: the constant-damping route (idamp=1)
+             ! expects a rate in inverse code time, and the value carried
+             ! over from relax_star is ~8 orders of magnitude too strong here.
+             ! t_dyn = 1/sqrt(G*rho) from the body's own bulk density.
+             !
+             idamp  = 2
+             tdyn_s = 1./sqrt(gg*rho_0*scale_rho)
+             if (id==master) then
+                print "(a)",' --- settling mode: loose cloud, shape cut after packing ---'
+                print "(a,1pg10.3,a)",' damping t_dyn        = ',tdyn_s,' s (idamp=2)'
+                print "(a,1pg10.3,a)",' shape volume         = ',vol_apophis*(udist/km)**3,' km^3'
+                print "(a,1pg10.3,a)",' shape circumradius   = ',r_circ*udist/km,' km'
+                print "(a,1pg10.3,a)",' DEM grain radius     = ',r_grain*udist/km,' km'
+                print "(a,1pg10.3,a)",' initial cloud radius = ',r_cloud*udist/km,' km'
+                print "(a,i9,a,i9)",   ' grains settling      = ',npart,'  -> after crop ~',np_apophis
+                print "(a,1pg10.3)",   ' target packing frac  = ',pack_phi
+             endif
+          else
+             do i=1,npart
+                call set_particle_type(i,idem)
+                xyzh(4,i) = xyzh(4,i) /hfact * 0.5 !set radius = to original particle spacing
+             enddo
+          endif
        endif
 
        if (apophis_spin_period > 0.) then
@@ -516,6 +620,9 @@ subroutine write_setupfile(filename)
  call write_inopt(scale_rho,'scale_rho','scaling factor for apophis bulk density',iunit)
  call write_inopt(mass_apophis,'mass_apophis','apophis mass in g (0 = from scale_rho and actual body volume)',iunit)
  call write_inopt(apophis_shape_file,'apophis_shape_file','shape config file for lattice cropping',iunit)
+ call write_inopt(pack_settle,'pack_settle','start from a loose cloud and settle under gravity (shape cut afterwards)',iunit)
+ call write_inopt(pack_expand,'pack_expand','initial cloud radius / target radius (settling mode)',iunit)
+ call write_inopt(pack_phi,'pack_phi','packing fraction used to size DEM grains (0.64 = random close packing)',iunit)
  call write_inopt(apophis_spin_period,'apophis_spin_period','Apophis spin period in seconds (0=no spin)',iunit)
  call write_inopt(apophis_spin_axis(1),'apophis_spin_axis_x','Apophis spin axis, x component',iunit)
  call write_inopt(apophis_spin_axis(2),'apophis_spin_axis_y','Apophis spin axis, y component',iunit)
@@ -560,6 +667,9 @@ subroutine read_setupfile(filename,ierr)
  call read_inopt(scale_rho,'scale_rho',db,default=1.0,errcount=nerr)
  call read_inopt(mass_apophis,'mass_apophis',db,min=0.,default=0.,errcount=nerr)
  call read_inopt(apophis_shape_file,'apophis_shape_file',db,default='apophis.shape',errcount=nerr)
+ call read_inopt(pack_settle,'pack_settle',db,default=.false.,errcount=nerr)
+ call read_inopt(pack_expand,'pack_expand',db,min=1.0,default=1.8,errcount=nerr)
+ call read_inopt(pack_phi,'pack_phi',db,min=0.01,max=0.74,default=0.64,errcount=nerr)
  call read_inopt(apophis_spin_period,'apophis_spin_period',db,min=0.,errcount=nerr)
  call read_inopt(apophis_spin_axis(1),'apophis_spin_axis_x',db,errcount=nerr)
  call read_inopt(apophis_spin_axis(2),'apophis_spin_axis_y',db,errcount=nerr)
