@@ -21,15 +21,16 @@ module shape
 !
 ! :Dependencies: physcon, random, stretchmap, unifdis
    use unifdis, only:set_unifdis
+   use physcon, only:pi
  implicit none
 
- public :: set_shape
+ public :: set_shape,get_mesh_geometry,inside_shape_file
 
  private
 
 contains
 
-subroutine set_shape(lattice,id,master,np_requested,x0,rmax,hfact,np,xyzh,nptot,objfile,vol)
+subroutine set_shape(lattice,id,master,np_requested,x0,rmax,hfact,np,xyzh,nptot,objfile,vol,sphere_radius)
  character(len=*), intent(in)    :: lattice
  integer,          intent(in)    :: id,master
  integer,          intent(in)    :: np_requested
@@ -39,6 +40,7 @@ subroutine set_shape(lattice,id,master,np_requested,x0,rmax,hfact,np,xyzh,nptot,
  integer(kind=8),  intent(inout) :: nptot
  character(len=*), intent(in)    :: objfile
  real,             intent(out), optional :: vol
+ real,             intent(in),  optional :: sphere_radius
  integer :: i,iter,np_try,np_keep,ncube
  real    :: xmin,xmax,ymin,ymax,zmin,zmax,delta,ratio,vol_keep
  character(len=32) :: shape_kind
@@ -55,7 +57,21 @@ subroutine set_shape(lattice,id,master,np_requested,x0,rmax,hfact,np,xyzh,nptot,
  ymin = -rmax; ymax = rmax
  zmin = -rmax; zmax = rmax
 
- call read_shape_file(objfile,rmax,shape_kind,p1,p2,p3,axis,meshfile,id,master)
+ !
+ ! sphere_radius bypasses the shape file entirely: used to build the loose
+ ! cloud for gravitational settling, where the body shape is cut out of the
+ ! settled packing afterwards rather than imposed on the initial lattice
+ !
+ if (present(sphere_radius)) then
+    shape_kind = 'sphere'
+    p1 = sphere_radius
+    p2 = sphere_radius
+    p3 = sphere_radius
+    axis = 'z'
+    meshfile = ''
+ else
+    call read_shape_file(objfile,rmax,shape_kind,p1,p2,p3,axis,meshfile,id,master)
+ endif
  mesh_ok = .false.
  if (trim(shape_kind) == 'mesh') then
     call load_obj_mesh(trim(meshfile),p1,vertices,faces,bmin,bmax,mesh_ok,id,master)
@@ -546,6 +562,157 @@ pure function cross(a,b) result(c)
  c(2) = a(3)*b(1) - a(1)*b(3)
  c(3) = a(1)*b(2) - a(2)*b(1)
 end function cross
+
+!----------------------------------------------------------------
+!+
+!  test a set of points against the shape in objfile, returning a
+!  keep/discard mask. Used to cut the body out of a settled packing,
+!  where the shape cannot be imposed on the lattice up front. The
+!  mesh is loaded once for the whole set, not once per point.
+!+
+!----------------------------------------------------------------
+subroutine inside_shape_file(objfile,rmax,np,xyzh,keep,nkeep,ierr,id,master)
+ character(len=*), intent(in)  :: objfile
+ real,             intent(in)  :: rmax
+ integer,          intent(in)  :: np
+ real,             intent(in)  :: xyzh(:,:)
+ logical,          intent(out) :: keep(:)
+ integer,          intent(out) :: nkeep,ierr
+ integer,          intent(in)  :: id,master
+ character(len=32)  :: shape_kind
+ character(len=1)   :: axis
+ character(len=256) :: meshfile
+ real    :: p1,p2,p3,bmin(3),bmax(3),x,y,z
+ logical :: mesh_ok
+ real, allocatable    :: vertices(:,:)
+ integer, allocatable :: faces(:,:)
+ integer :: i
+
+ ierr  = 0
+ nkeep = 0
+ keep(1:np) = .false.
+
+ call read_shape_file(objfile,rmax,shape_kind,p1,p2,p3,axis,meshfile,id,master)
+
+ mesh_ok = .false.
+ if (trim(shape_kind) == 'mesh') then
+    call load_obj_mesh(trim(meshfile),p1,vertices,faces,bmin,bmax,mesh_ok,id,master)
+    if (.not.mesh_ok) then
+       ierr = 1
+       if (id==master) write(*,"(1x,a)") 'crop: mesh unreadable, falling back to a sphere of rmax'
+       shape_kind = 'sphere'
+       p1 = rmax; p2 = rmax; p3 = rmax; axis = 'z'
+    endif
+ endif
+
+ !$omp parallel do default(none) schedule(guided) &
+ !$omp shared(np,xyzh,keep,mesh_ok,vertices,faces,bmin,bmax,shape_kind,p1,p2,p3,axis) &
+ !$omp private(i,x,y,z) reduction(+:nkeep)
+ do i=1,np
+    x = xyzh(1,i); y = xyzh(2,i); z = xyzh(3,i)
+    if (mesh_ok) then
+       if (x < bmin(1) .or. x > bmax(1)) cycle
+       if (y < bmin(2) .or. y > bmax(2)) cycle
+       if (z < bmin(3) .or. z > bmax(3)) cycle
+       if (.not.point_inside_mesh((/x,y,z/),vertices,faces)) cycle
+    else
+       if (.not.inside_shape(x,y,z,shape_kind,p1,p2,p3,axis)) cycle
+    endif
+    keep(i) = .true.
+    nkeep = nkeep + 1
+ enddo
+ !$omp end parallel do
+
+ if (allocated(vertices)) deallocate(vertices)
+ if (allocated(faces)) deallocate(faces)
+
+end subroutine inside_shape_file
+
+!----------------------------------------------------------------
+!+
+!  exact volume and circumradius of the shape, without building a
+!  lattice. Needed by the settling path: the body's volume is the
+!  MESH volume (it fixes the mass and hence the density), and the
+!  settled sphere must circumscribe the mesh or the crop truncates it.
+!+
+!----------------------------------------------------------------
+subroutine get_mesh_geometry(objfile,rmax,vol,rcirc,ierr,id,master)
+ character(len=*), intent(in)  :: objfile
+ real,             intent(in)  :: rmax
+ real,             intent(out) :: vol,rcirc
+ integer,          intent(out) :: ierr
+ integer,          intent(in)  :: id,master
+ character(len=32)  :: shape_kind
+ character(len=1)   :: axis
+ character(len=256) :: meshfile
+ real    :: p1,p2,p3,bmin(3),bmax(3),a(3),b(3),c(3),r2
+ logical :: mesh_ok
+ real, allocatable    :: vertices(:,:)
+ integer, allocatable :: faces(:,:)
+ integer :: i
+
+ ierr  = 0
+ vol   = 0.
+ rcirc = 0.
+
+ call read_shape_file(objfile,rmax,shape_kind,p1,p2,p3,axis,meshfile,id,master)
+
+ if (trim(shape_kind) /= 'mesh') then
+    !
+    ! analytic shapes: volume and circumradius in closed form
+    !
+    select case(trim(shape_kind))
+    case('ellipsoid')
+       vol   = 4./3.*pi*p1*p2*p3
+       rcirc = max(p1,p2,p3)
+    case('box')
+       vol   = 8.*p1*p2*p3
+       rcirc = sqrt(p1*p1 + p2*p2 + p3*p3)
+    case('cylinder')
+       vol   = pi*p1*p1*p2
+       rcirc = sqrt(p1*p1 + 0.25*p2*p2)
+    case default   ! sphere
+       vol   = 4./3.*pi*p1**3
+       rcirc = p1
+    end select
+    return
+ endif
+
+ call load_obj_mesh(trim(meshfile),p1,vertices,faces,bmin,bmax,mesh_ok,id,master)
+ if (.not.mesh_ok) then
+    ierr  = 1
+    vol   = 4./3.*pi*rmax**3
+    rcirc = rmax
+    return
+ endif
+ !
+ ! volume by the divergence theorem: sum of signed tetrahedron volumes
+ ! from the origin to each triangle. The mesh is centred by load_obj_mesh,
+ ! so the origin is interior and the sum is the enclosed volume.
+ !
+ vol = 0.
+ do i=1,size(faces,2)
+    a = vertices(:,faces(1,i))
+    b = vertices(:,faces(2,i))
+    c = vertices(:,faces(3,i))
+    vol = vol + ( a(1)*(b(2)*c(3) - b(3)*c(2)) &
+                - a(2)*(b(1)*c(3) - b(3)*c(1)) &
+                + a(3)*(b(1)*c(2) - b(2)*c(1)) )/6.
+ enddo
+ vol = abs(vol)
+ !
+ ! circumradius = furthest vertex from the (centred) origin
+ !
+ do i=1,size(vertices,2)
+    r2 = dot_product(vertices(:,i),vertices(:,i))
+    rcirc = max(rcirc,r2)
+ enddo
+ rcirc = sqrt(rcirc)
+
+ if (allocated(vertices)) deallocate(vertices)
+ if (allocated(faces)) deallocate(faces)
+
+end subroutine get_mesh_geometry
 
 logical function is_obj_path(path) result(ok)
  character(len=*), intent(in) :: path
