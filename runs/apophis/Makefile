@@ -60,3 +60,14 @@ plot:
 	cd ${SPLASH_DIR}; make sphNG
 plotc:
 	cd ${SPLASH_DIR}; make clean
+
+# build everything the DEM settling workflow needs, in one go.
+# the two moddump builds are deliberate: MODFILE is a build-time choice,
+# so the flyby moddump is built, copied aside, then the crop one restored.
+demall:
+	$(MAKE) again
+	$(MAKE) setup
+	$(MAKE) analysis ANALYSIS=analysis_demshape.f90
+	$(MAKE) moddump MODFILE="set_shape.f90 moddump_earthflyby.f90"
+	cp phantommoddump phantomflyby
+	$(MAKE) moddump
