@@ -49,6 +49,7 @@ module setup
  logical :: pack_settle
  real :: pack_expand
  real :: pack_phi
+ character(len=256) :: packing_file
 
  private
 
@@ -67,6 +68,8 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
  use io,            only:master,fatal,warning
  use timestep,      only:tmax,dtmax
  use damping,     only:idamp,tdyn_s
+ use readwrite_dumps, only:read_dump
+ use io,          only:idisk1,iprint,nprocs
  use centreofmass,  only:reset_centreofmass
  use setsolarsystem,only:set_minor_planets,add_sun_and_planets,add_body
  use kernel,        only:hfact_default
@@ -91,7 +94,11 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
  !integer :: values(8),year,month,day
  real    :: period,semia,mtot,dx
  real    :: r_apophis,m_apophis,vol_apophis,rtidal,spsoundmin,r_grain,r_circ,r_cloud
- integer :: ierr_mesh,n_settle
+ real    :: udist_want,umass_want,tfile,hfactfile
+ real, allocatable :: xyzh_body(:,:)
+ integer :: npart_body
+ logical :: npart_body_used
+ integer :: ierr_mesh,n_settle,ierr_body
  real    :: dr(3),sep_km,sep_re,rperi,rperi_km,rperi_re,ecc,vrel_kms
  real    :: dv(3)
 !
@@ -120,6 +127,7 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
  apophis_spin_axis   = (/ 0., 0., 1. /)
  pack_settle = .false.
  pack_expand = 1.8
+ packing_file = ''
  pack_phi    = 0.64
  r_grain     = 0.
  r_circ      = 0.
@@ -138,6 +146,36 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
 ! set units
 !
  call set_units(mass=solarm,dist=km,G=1.d0)
+!
+! A pre-built body (settled and cropped elsewhere) is loaded here, before
+! anything else populates the particle or sink arrays, because read_dump
+! writes straight into them. The zeroing block below then wipes what it
+! left behind and we keep our own copy.
+!
+! read_dump also overwrites udist/umass/utime from the dump header, so the
+! units are compared against the ones just set and then re-asserted. A dump
+! written under a different unit system would otherwise have its grain
+! coordinates silently reinterpreted.
+!
+ npart_body = 0
+ npart_body_used = .false.
+ if (len_trim(packing_file) > 0) then
+    udist_want = udist
+    umass_want = umass
+    call read_dump(trim(packing_file),tfile,hfactfile,idisk1,iprint,id,nprocs,ierr_body)
+    if (ierr_body /= 0) call fatal('setup_solarsystem',&
+       'could not read packing_file '//trim(packing_file))
+    npart_body = npart
+    if (npart_body < 2) call fatal('setup_solarsystem','packing_file contains no particles')
+    if (abs(udist-udist_want) > 1.e-10*udist_want .or. &
+        abs(umass-umass_want) > 1.e-10*umass_want) call fatal('setup_solarsystem',&
+       'packing_file was written with different units')
+    allocate(xyzh_body(4,npart_body))
+    xyzh_body(1:4,1:npart_body) = xyzh(1:4,1:npart_body)
+    call set_units(mass=solarm,dist=km,G=1.d0)
+    if (id==master) print "(a,i0,a)",' loaded ',npart_body,&
+       ' grains from '//trim(packing_file)
+ endif
 !
 ! general parameters
 !
@@ -243,7 +281,27 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
     !
     vol_apophis = 4./3.*pi*r_apophis**3
     if (np_apophis > 1) then
-       if (pack_settle) then
+       if (npart_body > 0) then
+          !
+          ! Body was built elsewhere: drop it in at the ephemeris position and
+          ! leave everything downstream alone. Its volume is the shape's, for
+          ! the same reason as the settling branch - the body IS the cropped
+          ! shape, so a sphere of r_apophis would overstate it.
+          !
+          call get_mesh_geometry(apophis_shape_file,r_apophis,vol_apophis,r_circ,&
+                                 ierr_mesh,id,master)
+          if (ierr_mesh /= 0) call warning('apophis',&
+             'could not read shape for packing_file volume: using a sphere')
+          npart = npart_body
+          npart_total = int(npart_body,kind=8)
+          do i=1,npart
+             xyzh(1:4,i) = xyzh_body(1:4,i)
+             xyzh(1:3,i) = xyzh(1:3,i) + xyzmh_ptmass(1:3,nptmass)
+          enddo
+          deallocate(xyzh_body)
+          npart_body_used = .true.
+          if (id==master) print "(a,i0,a)",' placed ',npart,' pre-built grains on the ephemeris orbit'
+       elseif (pack_settle) then
           !
           ! The body's volume is the SHAPE's volume, not a sphere's and not the
           ! cloud's: it fixes the mass and hence the bulk density. Taken exactly
@@ -344,7 +402,17 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
           npartoftype(idem) = npartoftype(igas)
           massoftype(igas) = 0.
           npartoftype(igas) = 0
-          if (pack_settle) then
+          if (npart_body_used) then
+             !
+             ! h already holds the grain radius from the settle; recomputing it
+             ! from spacing or from pack_phi would silently resize every grain.
+             !
+             do i=1,npart
+                call set_particle_type(i,idem)
+             enddo
+             if (id==master) print "(a,1pg10.3,a)",&
+                ' DEM grain radius     = ',maxval(xyzh(4,1:npart))*udist/km,' km (from packing_file)'
+          elseif (pack_settle) then
              !
              ! r_grain was fixed above from the SHAPE volume and the requested
              ! kept-particle count, so that np_apophis grains fill the shape at
@@ -623,6 +691,7 @@ subroutine write_setupfile(filename)
  call write_inopt(pack_settle,'pack_settle','start from a loose cloud and settle under gravity (shape cut afterwards)',iunit)
  call write_inopt(pack_expand,'pack_expand','initial cloud radius / target radius (settling mode)',iunit)
  call write_inopt(pack_phi,'pack_phi','packing fraction used to size DEM grains (0.64 = random close packing)',iunit)
+ call write_inopt(packing_file,'packing_file','dump holding a pre-built body (settled+cropped); blank = build one',iunit)
  call write_inopt(apophis_spin_period,'apophis_spin_period','Apophis spin period in seconds (0=no spin)',iunit)
  call write_inopt(apophis_spin_axis(1),'apophis_spin_axis_x','Apophis spin axis, x component',iunit)
  call write_inopt(apophis_spin_axis(2),'apophis_spin_axis_y','Apophis spin axis, y component',iunit)
@@ -670,6 +739,7 @@ subroutine read_setupfile(filename,ierr)
  call read_inopt(pack_settle,'pack_settle',db,default=.false.,errcount=nerr)
  call read_inopt(pack_expand,'pack_expand',db,min=1.0,default=1.8,errcount=nerr)
  call read_inopt(pack_phi,'pack_phi',db,min=0.01,max=0.74,default=0.64,errcount=nerr)
+ call read_inopt(packing_file,'packing_file',db,default='',errcount=nerr)
  call read_inopt(apophis_spin_period,'apophis_spin_period',db,min=0.,errcount=nerr)
  call read_inopt(apophis_spin_axis(1),'apophis_spin_axis_x',db,errcount=nerr)
  call read_inopt(apophis_spin_axis(2),'apophis_spin_axis_y',db,errcount=nerr)
