@@ -80,6 +80,7 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
  use orbits,        only:get_pericentre_distance,get_eccentricity
  use infile_utils,  only:get_options
  use ptmass,        only:isink_potential
+ use checkconserved,only:get_conserv
  integer,           intent(in)    :: id
  integer,           intent(inout) :: npart
  integer,           intent(out)   :: npartoftype(:)
@@ -170,6 +171,11 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
     if (abs(udist-udist_want) > 1.e-10*udist_want .or. &
         abs(umass-umass_want) > 1.e-10*umass_want) call fatal('setup_solarsystem',&
        'packing_file was written with different units')
+    !
+    ! read_dump also picks up the conservation reference values of the
+    ! isolated body; the new system must measure its own at startup
+    !
+    get_conserv = 1.0
     allocate(xyzh_body(4,npart_body))
     xyzh_body(1:4,1:npart_body) = xyzh(1:4,1:npart_body)
     call set_units(mass=solarm,dist=km,G=1.d0)
