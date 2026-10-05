@@ -109,6 +109,7 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
                           pxyzu_ptmass,metrics_ptmass
  use part,           only:n_group,n_ingroup,n_sing,gtgrad,group_info,bin_info,nmatrix
  use part,           only:ibin,ibin_old,twas,iactive,ibin_wake
+ use part,           only:wdem,wdempred,dwdem
  use part,           only:metricderivs,metricderivs_ptmass
  use deriv,          only:derivs
  use timestep,       only:dterr,bignumber,tolv
@@ -139,6 +140,7 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
  real,    intent(out)   :: dtnew
  integer            :: i,its,np,ntypes,itype,nwake,nvfloorp,nvfloorps,nvfloorc,ialphaloc
  real               :: timei,erri,errmax,v2i,errmaxmean
+ real               :: wi(3)
  real               :: vxi,vyi,vzi,eni,hdtsph,pmassi
  real               :: alphaloci,source,tdecay1,hi,rhoi,ddenom,spsoundi
  real               :: v2mean,hdti
@@ -174,6 +176,7 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
  nvfloorp  = 0
  !$omp parallel do default(none) &
  !$omp shared(npart,xyzh,vxyzu,fxyzu,iphase,hdtsph,store_itype) &
+ !$omp shared(wdem,dwdem) &
  !$omp shared(rad,drad,pxyzu) &
  !$omp shared(Bevol,dBevol,dustevol,ddustevol,use_dustfrac) &
  !$omp shared(dustprop,ddustprop,dustproppred,ufloor,icooling,Tfloor) &
@@ -209,6 +212,12 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
              vxyzu(:,i) = vxyzu(:,i) + hdti*fxyzu(:,i)
           endif
        endif
+       !
+       ! DEM grain spin is kicked with the velocity. dwdem is zero for
+       ! anything but a DEM grain, so the spin of other particles stays zero
+       ! (itype is not set in a single-type run, so it cannot be tested here)
+       !
+       wdem(:,i) = wdem(:,i) + hdti*dwdem(:,i)
 
        !--floor the thermal energy if requested and required
        if (ufloor > 0. .and. icooling /= 9) then
@@ -308,7 +317,7 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
 !$omp shared(alphaind,alphamax,ialphaloc) &
 !$omp shared(eos_vars,ufloor,icooling,Tfloor) &
 !$omp shared(twas,timei) &
-!$omp shared(dem_active) &
+!$omp shared(dem_active,wdem,wdempred,dwdem) &
 !$omp shared(rad,drad,radpred)&
 !$omp private(hi,rhoi,tdecay1,source,ddenom,hdti) &
 !$omp private(i,spsoundi,alphaloci) &
@@ -363,6 +372,7 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
              vpred(:,i) = vxyzu(:,i) + hdti*fxyzu(:,i)
           endif
        endif
+       wdempred(:,i) = wdem(:,i) + hdti*dwdem(:,i)
 
        !--floor the thermal energy if requested and required
        if (ufloor > 0.) then
@@ -474,6 +484,7 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
     store_itype = (maxphase==maxp .and. ntypes > 1)
 !$omp parallel default(none) &
 !$omp shared(xyzh,vxyzu,vpred,fxyzu,npart,hdtsph,store_itype) &
+!$omp shared(wdem,wdempred,dwdem) &
 !$omp shared(pxyzu,ppred) &
 !$omp shared(Bevol,dBevol,iphase,its) &
 !$omp shared(dustevol,ddustevol,use_dustfrac) &
@@ -486,7 +497,7 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
 !$omp shared(rad,radpred,drad)&
 !$omp private(i,vxi,vyi,vzi) &
 !$omp private(pxi,pyi,pzi,p2i) &
-!$omp private(erri,v2i,eni) &
+!$omp private(erri,v2i,eni,wi) &
 !$omp reduction(max:errmax) &
 !$omp reduction(+:np,v2mean,p2mean,nwake,nvfloorc) &
 !$omp firstprivate(pmassi,itype)
@@ -514,6 +525,7 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
                       vxyzu(:,i) = vxyzu(:,i) + dti*fxyzu(:,i)
                    endif
                 endif
+                wdem(:,i) = wdem(:,i) + dti*dwdem(:,i)
 
                 if (use_dustgrowth .and. itype==idust) dustprop(:,i) = dustprop(:,i) + dti*ddustprop(:,i)
                 if (itype==igas) then
@@ -541,6 +553,7 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
                    vxyzu(:,i) = vxyzu(:,i) + hdti*fxyzu(:,i)
                 endif
              endif
+             wdem(:,i) = wdem(:,i) + hdti*dwdem(:,i)
 
              !--floor the thermal energy if requested and required
              if (ufloor > 0.) then
@@ -593,6 +606,7 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
                 pxyzu(2,i) = pyi
                 pxyzu(3,i) = pzi
                 pxyzu(4,i) = eni
+                wdem(:,i)  = wdem(:,i) + hdtsph*dwdem(:,i)
              else
                 vxi = vxyzu(1,i) + hdtsph*fxyzu(1,i)
                 vyi = vxyzu(2,i) + hdtsph*fxyzu(2,i)
@@ -605,6 +619,13 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
                    endif
                 endif
                 erri = (vxi - vpred(1,i))**2 + (vyi - vpred(2,i))**2 + (vzi - vpred(3,i))**2
+                !
+                ! DEM grain spin enters the contact force too, so its error
+                ! counts, as the surface speed h*w of the grain (R = h)
+                !
+                wi(:) = wdem(:,i) + hdtsph*dwdem(:,i)
+                erri  = erri + xyzh(4,i)**2*dot_product(wi - wdempred(:,i),wi - wdempred(:,i))
+                wdem(:,i) = wi(:)
                 errmax = max(errmax,erri)
 
                 v2i    = vxi*vxi + vyi*vyi + vzi*vzi
@@ -653,6 +674,7 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
 !$omp private(i) &
 !$omp shared(npart,hdtsph)&
 !$omp shared(store_itype,vxyzu,fxyzu,vpred,iphase) &
+!$omp shared(wdem,wdempred,dwdem) &
 !$omp shared(Bevol,dBevol,Bpred,pxyzu,ppred) &
 !$omp shared(dustprop,ddustprop,dustproppred,use_dustfrac,dustevol,dustpred,ddustevol) &
 !$omp shared(filfac,filfacpred,use_porosity) &
@@ -670,6 +692,7 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
                 else
                    vpred(:,i) = vxyzu(:,i)
                 endif
+                wdempred(:,i) = wdem(:,i)
                 if (use_dustgrowth) dustproppred(:,i) = dustprop(:,i)
                 if (use_porosity) filfacpred(i) = filfac(i)
                 if (mhd)          Bpred(:,i)  = Bevol(:,i)
@@ -682,13 +705,16 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
              else
                 vpred(:,i) = vxyzu(:,i)
              endif
+             wdempred(:,i) = wdem(:,i)
              if (use_dustgrowth) dustproppred(:,i) = dustprop(:,i)
              if (use_porosity) filfacpred(i) = filfac(i)
              if (mhd)          Bpred(:,i)  = Bevol(:,i)
              if (use_dustfrac) dustpred(:,i) = dustevol(:,i)
              if (do_radiation) radpred(:,i) = rad(:,i)
              !
-             ! shift v back to the half step
+             ! shift v (and DEM spin) back to the half step
+             !
+             wdem(:,i) = wdem(:,i) - hdtsph*dwdem(:,i)
              !
              if (gr) then
                 pxyzu(:,i) = pxyzu(:,i) - hdtsph*fxyzu(:,i)

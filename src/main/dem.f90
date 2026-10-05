@@ -50,17 +50,18 @@ contains
 !  Implements Eq. (3) from Schwartz+2012 for overlapping spheres
 !+
 !----------------------------------------------------------------
-subroutine get_ssdem_force(Rsinki,Rsinkj,mi,mj,ddr,dx,dy,dz,fx,fy,fz,veli,velj,wi,wj,dtmin,bonded)
+subroutine get_ssdem_force(Rsinki,Rsinkj,mi,mj,ddr,dx,dy,dz,fx,fy,fz,veli,velj,wi,wj,dtmin,bonded,dwi)
  use physcon,     only:pi
  use vectorutils, only:cross_product
  use units,       only:umass,utime,udist
  real, intent(in)    :: Rsinki,Rsinkj,mi,mj,ddr,dx,dy,dz,veli(3),velj(3),wi(3),wj(3)
  real, intent(inout) :: fx,fy,fz,dtmin
  logical, intent(in), optional :: bonded  ! true if i and j are in the same clump
+ real, intent(inout), optional :: dwi(3)  ! spin rate of change of i (torque / moment of inertia)
  real :: r,overlap,gap,kn,kn_dem,kt_dem,kb_dem,coh_gap_max
  logical :: is_bond
  real :: cn,ct,reduced_mass,log_epsilon_n_dem,li,lj
- real :: nvec(3),vrel(3),n_cross_wi(3),n_cross_wj(3),u_dot_n,u_n(3),u_t(3)
+ real :: nvec(3),vrel(3),n_cross_wi(3),n_cross_wj(3),u_dot_n,u_n(3),u_t(3),ft(3)
 
  !----------------------------------------------------------------
  ! Normal force
@@ -89,22 +90,26 @@ subroutine get_ssdem_force(Rsinki,Rsinkj,mi,mj,ddr,dx,dy,dz,fx,fy,fz,veli,velj,w
     ! and pushing, on top of the contact spring, when squeezed
     kn = kb_dem
     if (overlap > 0.) kn = kn_dem + kb_dem
-    fx = fx + kn * overlap * nvec(1) / mj
-    fy = fy + kn * overlap * nvec(2) / mj
-    fz = fz + kn * overlap * nvec(3) / mj
+    fx = fx + kn * overlap * nvec(1) / mi
+    fy = fy + kn * overlap * nvec(2) / mi
+    fz = fz + kn * overlap * nvec(3) / mi
  elseif (overlap > 0.0) then
     kn = kn_dem
-    fx = fx + kn * overlap * nvec(1) / mj
-    fy = fy + kn * overlap * nvec(2) / mj
-    fz = fz + kn * overlap * nvec(3) / mj
+    fx = fx + kn * overlap * nvec(1) / mi
+    fy = fy + kn * overlap * nvec(2) / mi
+    fz = fz + kn * overlap * nvec(3) / mi
     !print*,' fx = ',fx,' fy = ',fy,' fz = ',fz
  elseif (kt_dem > 0. .and. gap > 0. .and. gap < coh_gap_max) then
     ! tensile spring when spheres are bonded but not overlapping
     kn = kt_dem
-    fx = fx - kn * gap * nvec(1) / mj
-    fy = fy - kn * gap * nvec(2) / mj
-    fz = fz - kn * gap * nvec(3) / mj
+    fx = fx - kn * gap * nvec(1) / mi
+    fy = fy - kn * gap * nvec(2) / mi
+    fz = fz - kn * gap * nvec(3) / mi
  endif
+ !
+ ! All of fx,fy,fz is the acceleration of i, so forces are divided by mi.
+ ! (They were divided by mj, which only agreed for equal-mass grains.)
+ !
 
  !----------------------------------------------------------------
  ! Damping force
@@ -118,8 +123,13 @@ subroutine get_ssdem_force(Rsinki,Rsinkj,mi,mj,ddr,dx,dy,dz,fx,fy,fz,veli,velj,w
  li = (Rsinki**2 - Rsinkj**2 + r**2) / (2.0 * r)
  lj = (Rsinkj**2 - Rsinki**2 + r**2) / (2.0 * r)
 
- ! Relative velocity at contact point (Eq. 8 from Schwartz+2012)
- vrel = veli - velj + li * n_cross_wi - lj * n_cross_wj
+ ! Relative velocity at contact point (Eq. 8 from Schwartz+2012).
+ ! nvec points from j to i, so the contact point is at x_i - li*nvec on i
+ ! and x_j + lj*nvec on j, moving at v_i + li*(n x w_i) and v_j - lj*(n x w_j).
+ ! Both spin terms therefore enter with a plus sign: with a minus on the
+ ! j term, two touching grains rotating rigidly together would show a
+ ! spurious sliding velocity. (Harmless until now, as spins were zero.)
+ vrel = veli - velj + li * n_cross_wi + lj * n_cross_wj
 
  ! Normal and tangential components
  u_dot_n = dot_product(vrel, nvec)
@@ -133,10 +143,23 @@ subroutine get_ssdem_force(Rsinki,Rsinkj,mi,mj,ddr,dx,dy,dz,fx,fy,fz,veli,velj,w
  ct = 0.
  !print*,' cn = ',cn
 
- ! Damping forces
- fx = fx - cn * u_n(1) / mj - ct * u_t(1)
- fy = fy - cn * u_n(2) / mj - ct * u_t(2)
- fz = fz - cn * u_n(3) / mj - ct * u_t(3)
+ ! Normal damping force
+ fx = fx - cn * u_n(1) / mi
+ fy = fy - cn * u_n(2) / mi
+ fz = fz - cn * u_n(3) / mi
+
+ !----------------------------------------------------------------
+ ! Tangential force and torque
+ !----------------------------------------------------------------
+ ! The tangential (friction) force ft acts at the contact point, so it
+ ! also spins i up: torque = (-li*nvec) x ft, over I = 2/5 mi Ri^2.
+ ! ct is still zero here, so ft is zero until friction is added.
+ !
+ ft = -ct * u_t
+ fx = fx + ft(1) / mi
+ fy = fy + ft(2) / mi
+ fz = fz + ft(3) / mi
+ if (present(dwi)) dwi = dwi - li * cross_product(nvec,ft) / (0.4 * mi * Rsinki**2)
 
  if (kn > 0.) dtmin = min(dtmin,sqrt(reduced_mass/kn))
 

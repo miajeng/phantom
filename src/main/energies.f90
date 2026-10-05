@@ -75,6 +75,7 @@ subroutine compute_energies(t)
                           nden_nimhd,eta_nimhd,iion,ndustsmall,graindens,grainsize,&
                           iamdust,ndusttypes,rad,iradxi,gtgrad,group_info,bin_info,n_group
  use part,           only:pxyzu,fxyzu,fext,apr_level,aprmassoftype,pxyzu_ptmass
+ use part,           only:idem,wdem
  use gravwaveutils,  only:calculate_strain,calc_gravitwaves
  use centreofmass,   only:get_centreofmass_accel
  use eos,            only:polyk,gamma,eos_is_non_ideal,eos_outputs_gasP
@@ -111,7 +112,7 @@ subroutine compute_energies(t)
  real    :: etaohm,etahall,etaambi,vhall,vion
  real    :: curlBi(3),vhalli(3),vioni(3),data_out(n_data_out)
  real    :: erotxi,erotyi,erotzi,fdum(3),x0(3),v0(3),a0(3),xyz_x_all(3),xyz_n_all(3)
- real    :: ekini,ethermi,epottmpi,eradi,emagi
+ real    :: ekini,ethermi,epottmpi,eradi,emagi,Idemi
  real    :: pdotv,bigvi(1:3),alpha_gr,beta_gr_UP(1:3),lorentzi,pxi,pyi,pzi
  real    :: gammaijdown(1:3,1:3)
  integer :: i,j,itype,iu
@@ -178,7 +179,7 @@ subroutine compute_energies(t)
 !$omp shared(Bevol,divcurlB,iphase,poten,dustfrac,use_dustfrac) &
 !$omp shared(use_ohm,use_hall,use_ambi,nden_nimhd,eta_nimhd,eta_constant) &
 !$omp shared(ev_data,np_rho,erot_com,calc_erot,gas_only,track_mass) &
-!$omp shared(calc_gravitwaves,use_sinktree) &
+!$omp shared(calc_gravitwaves,use_sinktree,wdem) &
 !$omp shared(iev_erad,iev_rho,iev_dt,iev_entrop,iev_rhop,iev_alpha) &
 !$omp shared(iev_B,iev_divB,iev_hdivB,iev_beta,iev_temp,iev_etao,iev_etah) &
 !$omp shared(iev_etaa,iev_vel,iev_vhall,iev_vion,iev_n) &
@@ -190,7 +191,7 @@ subroutine compute_energies(t)
 !$omp private(rho1i,shearparam_art,shearparam_phys,ratio_phys_to_av,betai) &
 !$omp private(gasfrac,rhogasi,dustfracisum,dustfraci,dust_to_gas,n_total,n_total1,n_ion) &
 !$omp private(etaohm,etahall,etaambi,vhalli,vhall,vioni,vion,data_out) &
-!$omp private(ekini,ethermi,emagi,eradi,epottmpi) &
+!$omp private(ekini,ethermi,emagi,eradi,epottmpi,Idemi) &
 !$omp private(erotxi,erotyi,erotzi,fdum) &
 !$omp private(ev_data_thread,np_rho_thread) &
 !$omp firstprivate(alphai,itype,pmassi) &
@@ -288,6 +289,17 @@ subroutine compute_energies(t)
           v2i   = vxi*vxi + vyi*vyi + vzi*vzi
           ekini = pmassi*v2i
        endif
+       !
+       ! a DEM grain is a sphere of radius h, with moment of inertia
+       ! I = 2/5 m h^2: its spin adds I*w to the angular momentum and
+       ! I*w^2 to ekini (halved with the rest at the end)
+       !
+       if (itype==idem) then
+          Idemi  = 0.4*pmassi*hi*hi
+          ekini  = ekini + Idemi*dot_product(wdem(:,i),wdem(:,i))
+       else
+          Idemi  = 0.
+       endif
 
        if (was_not_accreted) then
           ! total mass
@@ -298,10 +310,10 @@ subroutine compute_energies(t)
           ymom = ymom + pmassi*pyi
           zmom = zmom + pmassi*pzi
 
-          ! angular momentum
-          angx = angx + pmassi*(yi*pzi - zi*pyi)
-          angy = angy + pmassi*(zi*pxi - xi*pzi)
-          angz = angz + pmassi*(xi*pyi - yi*pxi)
+          ! angular momentum, orbital plus DEM grain spin
+          angx = angx + pmassi*(yi*pzi - zi*pyi) + Idemi*wdem(1,i)
+          angy = angy + pmassi*(zi*pxi - xi*pzi) + Idemi*wdem(2,i)
+          angz = angz + pmassi*(xi*pyi - yi*pxi) + Idemi*wdem(3,i)
 
           ! kinetic energy & rms velocity
           ekin = ekin + ekini

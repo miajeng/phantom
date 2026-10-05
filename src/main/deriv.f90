@@ -259,7 +259,7 @@ subroutine get_derivs_global(tused,dt_new,dt,icall)
  use part,         only:npart,xyzh,vxyzu,fxyzu,fext,divcurlv,divcurlB,&
                         Bevol,dBevol,rad,drad,radprop,dustprop,ddustprop,filfac,&
                         dustfrac,ddustevol,eos_vars,pxyzu,dens,metrics,dustevol,gr,&
-                        apr_level
+                        apr_level,wdem,wdempred
  use timing,       only:printused,getused
  use io,           only:id,master
  use cons2prim,    only:prim2consall
@@ -283,6 +283,9 @@ subroutine get_derivs_global(tused,dt_new,dt,icall)
     call init_metric(npart,xyzh,metrics,time=time)
     call prim2consall(npart,xyzh,metrics,vxyzu,pxyzu,use_dens=.false.,dens=dens)
  endif
+
+ ! the force reads the predicted DEM spin; outside a step that is the spin itself
+ wdempred(:,1:npart) = wdem(:,1:npart)
 
  ! evaluate derivatives
  call derivs(icalli,npart,npart,xyzh,vxyzu,fxyzu,fext,divcurlv,divcurlB,Bevol,dBevol,&

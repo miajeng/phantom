@@ -179,7 +179,11 @@ module forces
        idviz          = 31 + 5*(maxdustsmall-1), &
        idensgasi      = 32 + 5*(maxdustsmall-1), &
        icsi           = 33 + 5*(maxdustsmall-1), &
-       idradi         = 34 + 5*(maxdustsmall-1)
+       idradi         = 34 + 5*(maxdustsmall-1), &
+ !--DEM grain spin rate of change (torque / moment of inertia)
+       idwdemxi       = 35 + 5*(maxdustsmall-1), &
+       idwdemyi       = 36 + 5*(maxdustsmall-1), &
+       idwdemzi       = 37 + 5*(maxdustsmall-1)
 
  private
 
@@ -927,7 +931,7 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
                        ihsoft,idem
  use dem,         only:get_ssdem_force
  use dim,         only:maxalpha,maxp,mhd_nonideal,gravity,gr,use_apr,isothermal,use_sinktree,disc_viscosity,track_lum
- use part,        only:rhoh,dvdx,aprmassoftype,shortsinktree,iclump
+ use part,        only:rhoh,dvdx,aprmassoftype,shortsinktree,iclump,wdempred
  use nicil,       only:nimhd_get_jcbcb,nimhd_get_dBdt
  use eos,         only:ieos,eos_is_non_ideal,icooling
  use eos_stamatellos, only:gradP_cool,getopac_opdep
@@ -1035,7 +1039,7 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
  real    :: alphai,grainmassi,graindensi,filfaci
  logical :: usej
  integer :: iamtypei
- real    :: veli_dem(3),velj_dem(3),spin_dem(3),Ri_dem,Rj_dem,dtdem
+ real    :: veli_dem(3),velj_dem(3),Ri_dem,Rj_dem,dtdem
  logical :: bonded_dem
  real    :: radFi(3),radFj(3),radRj,radDFWi,radDFWj,c_code,radkappai,radkappaj,&
             radDi,radDj,radeni,radenj,radlambdai,radlambdaj
@@ -1227,7 +1231,6 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
     gradP_coolj=0.
  endif
 
- spin_dem = 0.   ! DEM particles have no spin storage yet
  dtdem    = bignumber
 
  loop_over_neighbours2: do n = 1,nneigh
@@ -1994,9 +1997,9 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
           if (iamtypei==idem .and. iamtypej==idem) then
              !
              !--soft-sphere DEM contact force between two DEM particles.
-             !  Three placeholders remain, each removed by a later step:
-             !    radius : taken as R=h here, with h = delta/2 in setup; step 3 adds a per-particle radius array
-             !    spin   : zero, as DEM particles have no spin storage yet
+             !    radius : taken as R=h here, with h = delta/2 in setup
+             !    spin   : the predicted grain spins, wdempred; the torque on
+             !             i is summed into fsum(idwdemxi:idwdemzi)
              !    dtdem  : discarded here; the contact timestep is applied
              !             globally in derivs via get_dem_dt, since it depends
              !             only on the smallest particle mass and kn
@@ -2006,11 +2009,13 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
              veli_dem = (/vxi,vyi,vzi/)
              velj_dem = (/vxj,vyj,vzj/)
              !--i indexes the local particle arrays here: without MPI no cell
-             !  is ever remote. The MPI build refuses clumps (read_options_ptmass).
+             !  is ever remote. The MPI build refuses clumps (read_options_ptmass),
+             !  and the spin of i is read the same way.
              bonded_dem = (iclump(i) /= 0 .and. iclump(i) == iclump(j))
              call get_ssdem_force(Ri_dem,Rj_dem,pmassi,pmassj,rij1,dx,dy,dz,&
                                   fsum(ifxi),fsum(ifyi),fsum(ifzi),&
-                                  veli_dem,velj_dem,spin_dem,spin_dem,dtdem,bonded_dem)
+                                  veli_dem,velj_dem,wdempred(:,i),wdempred(:,j),dtdem,bonded_dem,&
+                                  fsum(idwdemxi:idwdemzi))
           endif
        endif ifgas
 
@@ -2703,7 +2708,7 @@ subroutine finish_cell_and_store_results(icall,cell,fxyzu,xyzh,vxyzu,poten,dt,dv
  use cooling,        only:energ_cooling,cooling_in_step
  use ptmass_heating, only:energ_sinkheat
  use dust,           only:drag_implicit
- use part,           only:bin_info,ipertg,fxyz_ptmass_tree
+ use part,           only:bin_info,ipertg,fxyz_ptmass_tree,dwdem
 #ifdef IND_TIMESTEPS
  use part,           only:ibin
  use timestep_ind,   only:get_newbin,check_dtmin
@@ -3002,6 +3007,9 @@ subroutine finish_cell_and_store_results(icall,cell,fxyzu,xyzh,vxyzu,poten,dt,dv
        fxyzu(2,i) = fsum(ifyi)
        fxyzu(3,i) = fsum(ifzi)
     endif
+    dwdem(1,i) = fsum(idwdemxi)   ! zero for all but DEM grains
+    dwdem(2,i) = fsum(idwdemyi)
+    dwdem(3,i) = fsum(idwdemzi)
     if (use_dust) then
        if (drag_implicit) then
           fxyz_drag(1,i) = fsum(ifdragxi)

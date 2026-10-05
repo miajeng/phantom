@@ -70,6 +70,15 @@ module part
 !
  integer, allocatable :: iclump(:)
 !
+!--DEM grain spin (angular velocity), its prediction to the end of the
+!  step for the contact force, and its rate of change (torque / moment of
+!  inertia). Advanced alongside vxyzu, vpred and fxyzu in step_leapfrog.
+!
+ real, allocatable :: wdem(:,:)
+ real, allocatable :: wdempred(:,:)
+ real, allocatable :: dwdem(:,:)
+ character(len=*), parameter :: wdem_label(3) = (/'wdemx','wdemy','wdemz'/)
+!
 !--storage of dust properties
 !
  real :: grainsize(maxdusttypes)
@@ -409,7 +418,7 @@ module part
 !--size of the buffer required for transferring particle
 !  information between MPI threads
 !
- integer, parameter :: ipartbufsize = 130
+ integer, parameter :: ipartbufsize = 139
 
  real            :: hfact,Bextx,Bexty,Bextz,tolh
  integer         :: npart
@@ -478,6 +487,9 @@ subroutine allocate_part
  call allocate_array('Bxyz', Bxyz, 3, maxmhd)
  call allocate_array('iorig', iorig, maxp)
  call allocate_array('iclump', iclump, maxp)
+ call allocate_array('wdem', wdem, 3, maxp)
+ call allocate_array('wdempred', wdempred, 3, maxp)
+ call allocate_array('dwdem', dwdem, 3, maxp)
  call allocate_array('iseed_sink', iseed_sink, maxp*merge(1,0,inject_parts))
  call allocate_array('dustprop', dustprop, 2, maxp_growth)
  call allocate_array('dustgasprop', dustgasprop, 4, maxp_growth)
@@ -579,6 +591,9 @@ subroutine deallocate_part
  if (allocated(Bxyz))     deallocate(Bxyz)
  if (allocated(iorig))    deallocate(iorig)
  if (allocated(iclump))   deallocate(iclump)
+ if (allocated(wdem))     deallocate(wdem)
+ if (allocated(wdempred)) deallocate(wdempred)
+ if (allocated(dwdem))    deallocate(dwdem)
  if (allocated(iseed_sink))   deallocate(iseed_sink)
  if (allocated(dustprop))     deallocate(dustprop)
  if (allocated(dustgasprop))  deallocate(dustgasprop)
@@ -751,6 +766,9 @@ subroutine init_part
 !$omp end parallel do
  norig = maxp
  iclump(:) = 0
+ wdem(:,:) = 0.
+ wdempred(:,:) = 0.
+ dwdem(:,:) = 0.
 
 end subroutine init_part
 
@@ -1315,6 +1333,9 @@ subroutine copy_particle(src,dst,new_part)
  endif
  if (inject_parts) iseed_sink(dst) = iseed_sink(src)
  iclump(dst) = iclump(src)
+ wdem(:,dst) = wdem(:,src)
+ wdempred(:,dst) = wdempred(:,src)
+ dwdem(:,dst) = dwdem(:,src)
 
 end subroutine copy_particle
 
@@ -1429,6 +1450,9 @@ subroutine copy_particle_all(src,dst,new_part)
  endif
  if (inject_parts) iseed_sink(dst) = iseed_sink(src)
  iclump(dst) = iclump(src)
+ wdem(:,dst) = wdem(:,src)
+ wdempred(:,dst) = wdempred(:,src)
+ dwdem(:,dst) = dwdem(:,src)
 
 end subroutine copy_particle_all
 
@@ -1751,6 +1775,9 @@ subroutine fill_sendbuf(i,xtemp,nbuf)
     if (inject_parts) call fill_buffer(xtemp,iseed_sink(i),nbuf)
     if (use_apr) call fill_buffer(xtemp,apr_level(i),nbuf)
     call fill_buffer(xtemp,real(iclump(i)),nbuf)
+    call fill_buffer(xtemp,wdem(:,i),nbuf)
+    call fill_buffer(xtemp,wdempred(:,i),nbuf)
+    call fill_buffer(xtemp,dwdem(:,i),nbuf)
  endif
  if (nbuf > ipartbufsize) call fatal('fill_sendbuf','error: send buffer size overflow',var='nbuf',ival=nbuf)
 
@@ -1839,6 +1866,9 @@ subroutine unfill_buffer(ipart,xbuf)
  if (inject_parts) iseed_sink(ipart) = nint(unfill_buf(xbuf,j),kind=8)
  if (use_apr) apr_level(ipart) = nint(unfill_buf(xbuf,j),kind=kind(apr_level))
  iclump(ipart)          = nint(unfill_buf(xbuf,j))
+ wdem(:,ipart)          = unfill_buf(xbuf,j,3)
+ wdempred(:,ipart)      = unfill_buf(xbuf,j,3)
+ dwdem(:,ipart)         = unfill_buf(xbuf,j,3)
 
 !--just to be on the safe side, set other things to zero
  if (mhd) then
