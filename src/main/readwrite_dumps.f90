@@ -60,7 +60,7 @@ subroutine write_fulldump(t,dumpfile,ntotal,iorder,sphNG)
  !dvdx,dvdx_label,&
                    rad,rad_label,radprop,radprop_label,do_radiation,maxirad,maxradprop,itemp,igasP,igamma,&
                    iorig,iseed_sink,iX,iZ,imu,nucleation,nucleation_label,n_nucleation,tau,itau_alloc,tau_lucy,itauL_alloc,&
-                   luminosity,eta_nimhd,eta_nimhd_label,apr_level
+                   luminosity,eta_nimhd,eta_nimhd_label,apr_level,iclump
  use part,  only:metrics,metricderivs,tmunus
  use options,    only:use_dustfrac,use_porosity,use_var_comp,icooling
  use dump_utils, only:tag,open_dumpfile_w,allocate_header,&
@@ -270,6 +270,8 @@ subroutine write_fulldump(t,dumpfile,ntotal,iorder,sphNG)
        if (inject_parts) call write_array(1,iseed_sink,'iseed_sink',npart,k,ipass,idump,nums,nerr)
        if (track_lum) call write_array(1,luminosity,'luminosity',npart,k,ipass,idump,nums,nerr)
        if (use_apr) call write_array(1,apr_level,'apr_level',npart,k,ipass,idump,nums,nerr)
+       ! DEM clump IDs, only when a body has boulders, so plain dumps are unchanged
+       if (any(iclump(1:npart) /= 0)) call write_array(1,iclump,'iclump',npart,k,ipass,idump,nums,nerr)
 
        if (use_krome) then
           call write_array(1,abundance,abundance_label,krome_nmols,npart,k,ipass,idump,nums,nerr)
@@ -968,7 +970,7 @@ subroutine read_phantom_arrays(i1,i2,noffset,narraylengths,nums,npartread,nparto
                         VrelVf,VrelVf_label,dustgasprop,dustgasprop_label,filfac,filfac_label,pxyzu,pxyzu_label,dust_temp, &
                         rad,rad_label,radprop,radprop_label,do_radiation,maxirad,maxradprop,ifluxx,ifluxy,ifluxz, &
                         nucleation,nucleation_label,n_nucleation,ikappa,tau,itau_alloc,tau_lucy,itauL_alloc,&
-                        ithick,ilambda,iorig,iseed_sink,dt_in,krome_nmols,T_gas_cool,apr_level
+                        ithick,ilambda,iorig,iseed_sink,dt_in,krome_nmols,T_gas_cool,apr_level,iclump
  use eos_stamatellos, only:ttherm_store,ueqi_store,tau_store,du_store
  use sphNGutils, only:mass_sphng,got_mass,set_gas_particle_mass
  use options,    only:use_porosity
@@ -986,7 +988,7 @@ subroutine read_phantom_arrays(i1,i2,noffset,narraylengths,nums,npartread,nparto
  logical               :: got_eosvars(maxeosvars),got_nucleation(n_nucleation),got_ray_tracer
  logical               :: got_psi,got_Tdust,got_dustprop(2),got_VrelVf(3),got_dustgasprop(4),got_iseed_sink
  logical               :: got_filfac,got_divcurlv(4),got_rad(maxirad),got_radprop(maxradprop),got_pxyzu(4)
- logical                :: got_iorig,got_apr_level,got_taumean,got_ueqi,got_dudt,got_ttherm
+ logical                :: got_iorig,got_iclump,got_apr_level,got_taumean,got_ueqi,got_dudt,got_ttherm
  character(len=lentag) :: tag,tagarr(64)
  integer :: k,i,iarr,ik,ndustfraci
  real, allocatable :: tmparray(:)
@@ -1023,6 +1025,7 @@ subroutine read_phantom_arrays(i1,i2,noffset,narraylengths,nums,npartread,nparto
  got_radprop     = .false.
  got_pxyzu       = .false.
  got_iorig       = .false.
+ got_iclump      = .false.
  got_iseed_sink  = .false.
  got_apr_level   = .false.
  got_ueqi        = .false.
@@ -1115,6 +1118,7 @@ subroutine read_phantom_arrays(i1,i2,noffset,narraylengths,nums,npartread,nparto
 
              ! read particle ID's
              call read_array(iorig,'iorig',got_iorig,ik,i1,i2,noffset,idisk1,tag,match,ierr)
+             call read_array(iclump,'iclump',got_iclump,ik,i1,i2,noffset,idisk1,tag,match,ierr)
              if (inject_parts) call read_array(iseed_sink,'iseed_sink',got_iseed_sink,ik,i1,i2,noffset,idisk1,tag,match,ierr)
 
              if (do_radiation) then
@@ -1142,6 +1146,10 @@ subroutine read_phantom_arrays(i1,i2,noffset,narraylengths,nums,npartread,nparto
 
  enddo over_arraylengths
  if (allocated(tmparray)) deallocate(tmparray)
+ !
+ ! a dump without clump IDs is all free grains
+ !
+ if (.not.got_iclump) iclump(i1:i2) = 0
  !
  ! check for errors
  !

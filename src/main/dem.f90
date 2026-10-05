@@ -18,6 +18,14 @@ module dem
 ! Optional tensile cohesion (linear spring when spheres are slightly separated)
 ! mimics van der Waals / regolith bond strength at sub-contact scale.
 !
+! Optional clump bonds glue grains into boulders: two grains with the same
+! nonzero clump ID (part%iclump) feel a two-sided spring toward touching,
+! r = R_i + R_j, so a clump holds its shape in tension and compression.
+! Grains are equal spheres, so the rest length is the same for every bond
+! and no bond list is stored. The price is that there is no bond memory: a
+! bond stretched past bond_reach stops pulling (the boulder breaks there),
+! but re-forms if the same two grains come back within reach.
+!
 ! :Owner: Daniel Price
 !
  implicit none
@@ -31,6 +39,8 @@ module dem
  real, public :: kn_cgs = 1e7         ! Spring constant (e.g. 10^4 kg/s^2 = 10^7 g/s^2)
  real, public :: kt_cgs = 0.          ! Tensile spring constant (g/s^2 per cm gap); 0 = no cohesion
  real, public :: coh_gap_max_cgs = 0. ! Max surface gap (cm) for cohesive bond; 0 = use 1% of mean radius
+ real, public :: kb_cgs = 0.          ! Clump bond spring constant (g/s^2 per cm stretch); 0 = no clumps
+ real, public :: bond_reach = 0.1     ! Max surface gap for a clump bond, as a fraction of R_i + R_j
 
 contains
 
@@ -40,13 +50,15 @@ contains
 !  Implements Eq. (3) from Schwartz+2012 for overlapping spheres
 !+
 !----------------------------------------------------------------
-subroutine get_ssdem_force(Rsinki,Rsinkj,mi,mj,ddr,dx,dy,dz,fx,fy,fz,veli,velj,wi,wj,dtmin)
+subroutine get_ssdem_force(Rsinki,Rsinkj,mi,mj,ddr,dx,dy,dz,fx,fy,fz,veli,velj,wi,wj,dtmin,bonded)
  use physcon,     only:pi
  use vectorutils, only:cross_product
  use units,       only:umass,utime,udist
  real, intent(in)    :: Rsinki,Rsinkj,mi,mj,ddr,dx,dy,dz,veli(3),velj(3),wi(3),wj(3)
  real, intent(inout) :: fx,fy,fz,dtmin
- real :: r,overlap,gap,kn,kn_dem,kt_dem,coh_gap_max
+ logical, intent(in), optional :: bonded  ! true if i and j are in the same clump
+ real :: r,overlap,gap,kn,kn_dem,kt_dem,kb_dem,coh_gap_max
+ logical :: is_bond
  real :: cn,ct,reduced_mass,log_epsilon_n_dem,li,lj
  real :: nvec(3),vrel(3),n_cross_wi(3),n_cross_wj(3),u_dot_n,u_n(3),u_t(3)
 
@@ -64,12 +76,23 @@ subroutine get_ssdem_force(Rsinki,Rsinkj,mi,mj,ddr,dx,dy,dz,fx,fy,fz,veli,velj,w
  kn = 0.
  kn_dem = kn_cgs / (umass/utime**2)  ! convert to code units
  kt_dem = kt_cgs / (umass/utime**2)
+ kb_dem = kb_cgs / (umass/utime**2)
+ is_bond = .false.
+ if (present(bonded)) is_bond = bonded .and. kb_dem > 0. .and. gap < bond_reach*(Rsinki + Rsinkj)
  if (coh_gap_max_cgs > 0.) then
     coh_gap_max = coh_gap_max_cgs / udist
  else
     coh_gap_max = 0.01 * (Rsinki + Rsinkj)
  endif
- if (overlap > 0.0) then
+ if (is_bond) then
+    ! clump bond: spring toward touching, pulling when stretched (overlap < 0)
+    ! and pushing, on top of the contact spring, when squeezed
+    kn = kb_dem
+    if (overlap > 0.) kn = kn_dem + kb_dem
+    fx = fx + kn * overlap * nvec(1) / mj
+    fy = fy + kn * overlap * nvec(2) / mj
+    fz = fz + kn * overlap * nvec(3) / mj
+ elseif (overlap > 0.0) then
     kn = kn_dem
     fx = fx + kn * overlap * nvec(1) / mj
     fy = fy + kn * overlap * nvec(2) / mj
@@ -142,8 +165,9 @@ real function get_dem_dt(mass_dem)
  ! the normal contact spring kn and the tensile cohesion spring kt, both
  ! applied in get_ssdem_force. Using kn alone silently under-resolves any
  ! run with kt > kn, which is exactly what a cohesion sweep reaches for.
+ ! A squeezed clump bond is kn + kb, so that is the stiffest when kb > 0.
  !
- kn_dem = max(kn_cgs,kt_cgs) / (umass/utime**2)
+ kn_dem = max(kn_cgs + kb_cgs,kt_cgs) / (umass/utime**2)
  if (kn_dem > 0. .and. mass_dem > 0.) then
     get_dem_dt = C_dem*sqrt(0.5*mass_dem/kn_dem)
  else
@@ -154,7 +178,7 @@ end function get_dem_dt
 
 !----------------------------------------------------------------
 !+
-!  Print DEM cohesion settings after reading the .in file
+!  Print DEM cohesion and clump bond settings after reading the .in file
 !+
 !----------------------------------------------------------------
 subroutine dem_cohesion_summary
@@ -162,6 +186,11 @@ subroutine dem_cohesion_summary
  use units,   only:umass,utime
  real :: kt_dem
 
+ if (kb_cgs > 0.) then
+    write(iprint,"(/,a)") ' DEM clump bonds enabled'
+    write(iprint,"(a,1pg12.4,a)") '   kb_cgs = ',kb_cgs,' g/s^2 per cm stretch'
+    write(iprint,"(a,1pg12.4,a)") '   bond_reach = ',bond_reach,' x (R_i + R_j) surface gap'
+ endif
  if (kt_cgs <= 0.) return
  kt_dem = kt_cgs / (umass/utime**2)
  write(iprint,"(/,a)") ' DEM tensile cohesion enabled'

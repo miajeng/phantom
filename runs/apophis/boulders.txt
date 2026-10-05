@@ -1,0 +1,11 @@
+# Placed boulders for phantomclumps (answer 2 to "Placed boulders").
+# One boulder per line, made in this order and numbered 1, 2, ...:
+#   x y z    centre in km, relative to the body's centre of mass
+#   a b c    semi-axes in km (a = b = c for a sphere)
+#   rx ry rz optional rotations in degrees, about x, then y, then z
+# A boulder is whatever grains lie inside its ellipsoid, so the body surface
+# trims it. Boulders listed later cannot take grains from earlier ones.
+#
+# Example: a two-lobed body, lobes touching near the middle of the long axis
+ -0.076  0.000  0.002    0.092 0.092 0.092
+  0.080 -0.001 -0.002    0.064 0.064 0.064

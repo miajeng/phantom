@@ -22,7 +22,7 @@ module setup
 !   - scale_earth_sep : *scale geocentric Earth–Apophis separation (1=ephemeris; requires apophis_only=F)*
 !   - apophis_spin_axis_x/y/z : *Apophis spin axis direction (normalized)*
 !
-! :Dependencies: centreofmass, eos_tillotson, infile_utils, io, kernel,
+! :Dependencies: centreofmass, dem, eos_tillotson, infile_utils, io, kernel,
 !   options, part, physcon, setbinary, setsolarsystem, setup_params,
 !   spherical, timestep, units
 !
@@ -61,7 +61,7 @@ contains
 !----------------------------------------------------------------
 subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,time,fileprefix)
  use part,         only:nptmass,xyzmh_ptmass,vxyz_ptmass,idust,set_particle_type,&
-                        grainsize,graindens,ndustlarge,ndusttypes,ndustsmall,ihacc,igas,idem
+                        grainsize,graindens,ndustlarge,ndusttypes,ndustsmall,ihacc,igas,idem,iclump
  use setbinary,     only:set_binary
  use units,         only:set_units,umass,udist,unit_density,unit_velocity,utime,in_code_units,in_units
  use physcon,       only:solarm,pi,au,km,solarr,ceresm,earthm,earthr,days,gg
@@ -80,6 +80,7 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
  use orbits,        only:get_pericentre_distance,get_eccentricity
  use infile_utils,  only:get_options
  use ptmass,        only:isink_potential
+ use dem,           only:kn_cgs,kb_cgs,bond_reach
  use checkconserved,only:get_conserv
  integer,           intent(in)    :: id
  integer,           intent(inout) :: npart
@@ -418,6 +419,21 @@ subroutine setpart(id,npart,npartoftype,xyzh,massoftype,vxyzu,polyk,gamma,hfact,
              enddo
              if (id==master) print "(a,1pg10.3,a)",&
                 ' DEM grain radius     = ',maxval(xyzh(4,1:npart))*udist/km,' km (from packing_file)'
+             !
+             ! A body glued into boulders by moddump_clumps carries its clump
+             ! IDs through read_dump, but the bonds only act if kb_cgs > 0, and
+             ! the .in written below would otherwise say 0: every boulder would
+             ! silently fall apart into dust. Default the bonds to the contact
+             ! stiffness kn_cgs, as used when the clumps were settled.
+             !
+             if (any(iclump(1:npart) /= 0)) then
+                if (kb_cgs <= 0.) kb_cgs = kn_cgs
+                if (id==master) then
+                   print "(a,i0,a,i0,a)",' boulders in body     = ',maxval(iclump(1:npart)),' (', &
+                                         count(iclump(1:npart) /= 0),' grains)'
+                   print "(a,1pg10.3,a,1pg10.3)",' clump bonds on: kb_cgs = ',kb_cgs,', bond_reach = ',bond_reach
+                endif
+             endif
           elseif (pack_settle) then
              !
              ! r_grain was fixed above from the SHAPE volume and the requested

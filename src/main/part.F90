@@ -65,6 +65,11 @@ module part
  integer(kind=8), allocatable :: iorig(:)
  integer(kind=8), allocatable :: iseed_sink(:)
 !
+!--DEM clump membership: grains sharing a nonzero ID are bonded into one
+!  boulder, 0 = free grain (dust). See dem.f90 and moddump_clumps.
+!
+ integer, allocatable :: iclump(:)
+!
 !--storage of dust properties
 !
  real :: grainsize(maxdusttypes)
@@ -404,7 +409,7 @@ module part
 !--size of the buffer required for transferring particle
 !  information between MPI threads
 !
- integer, parameter :: ipartbufsize = 129
+ integer, parameter :: ipartbufsize = 130
 
  real            :: hfact,Bextx,Bexty,Bextz,tolh
  integer         :: npart
@@ -472,6 +477,7 @@ subroutine allocate_part
  call allocate_array('apr_level',apr_level,maxp_apr)
  call allocate_array('Bxyz', Bxyz, 3, maxmhd)
  call allocate_array('iorig', iorig, maxp)
+ call allocate_array('iclump', iclump, maxp)
  call allocate_array('iseed_sink', iseed_sink, maxp*merge(1,0,inject_parts))
  call allocate_array('dustprop', dustprop, 2, maxp_growth)
  call allocate_array('dustgasprop', dustgasprop, 4, maxp_growth)
@@ -572,6 +578,7 @@ subroutine deallocate_part
  if (allocated(Bevol))    deallocate(Bevol)
  if (allocated(Bxyz))     deallocate(Bxyz)
  if (allocated(iorig))    deallocate(iorig)
+ if (allocated(iclump))   deallocate(iclump)
  if (allocated(iseed_sink))   deallocate(iseed_sink)
  if (allocated(dustprop))     deallocate(dustprop)
  if (allocated(dustgasprop))  deallocate(dustgasprop)
@@ -743,6 +750,7 @@ subroutine init_part
  enddo
 !$omp end parallel do
  norig = maxp
+ iclump(:) = 0
 
 end subroutine init_part
 
@@ -1306,6 +1314,7 @@ subroutine copy_particle(src,dst,new_part)
     iorig(dst) = iorig(src) ! we are moving the particle within the list; maintain ID
  endif
  if (inject_parts) iseed_sink(dst) = iseed_sink(src)
+ iclump(dst) = iclump(src)
 
 end subroutine copy_particle
 
@@ -1419,6 +1428,7 @@ subroutine copy_particle_all(src,dst,new_part)
     iorig(dst) = iorig(src) ! we are moving the particle within the list; maintain ID
  endif
  if (inject_parts) iseed_sink(dst) = iseed_sink(src)
+ iclump(dst) = iclump(src)
 
 end subroutine copy_particle_all
 
@@ -1740,6 +1750,7 @@ subroutine fill_sendbuf(i,xtemp,nbuf)
     call fill_buffer(xtemp,iorig(i),nbuf)
     if (inject_parts) call fill_buffer(xtemp,iseed_sink(i),nbuf)
     if (use_apr) call fill_buffer(xtemp,apr_level(i),nbuf)
+    call fill_buffer(xtemp,real(iclump(i)),nbuf)
  endif
  if (nbuf > ipartbufsize) call fatal('fill_sendbuf','error: send buffer size overflow',var='nbuf',ival=nbuf)
 
@@ -1827,6 +1838,7 @@ subroutine unfill_buffer(ipart,xbuf)
  iorig(ipart)           = nint(unfill_buf(xbuf,j),kind=8)
  if (inject_parts) iseed_sink(ipart) = nint(unfill_buf(xbuf,j),kind=8)
  if (use_apr) apr_level(ipart) = nint(unfill_buf(xbuf,j),kind=kind(apr_level))
+ iclump(ipart)          = nint(unfill_buf(xbuf,j))
 
 !--just to be on the safe side, set other things to zero
  if (mhd) then

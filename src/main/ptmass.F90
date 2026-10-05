@@ -2587,7 +2587,7 @@ subroutine write_options_ptmass(iunit)
  use infile_utils, only:write_inopt
  use subgroup,     only:r_neigh
  use dim,          only:use_sinktree
- use dem,          only:kn_cgs,epsilon_n_dem,ct_dem,kt_cgs,coh_gap_max_cgs
+ use dem,          only:kn_cgs,epsilon_n_dem,ct_dem,kt_cgs,coh_gap_max_cgs,kb_cgs,bond_reach
  use part,         only:npartoftype,idem
  integer, intent(in) :: iunit
 
@@ -2607,6 +2607,8 @@ subroutine write_options_ptmass(iunit)
     call write_inopt(ct_dem,'ct_dem','DEM tangential damping coefficient',iunit)
     call write_inopt(kt_cgs,'kt_cgs','DEM tensile spring constant (g/s^2 per cm gap; 0=off)',iunit)
     call write_inopt(coh_gap_max_cgs,'coh_gap_max_cgs','max surface gap for DEM bond (cm; 0=1% of R_i+R_j)',iunit)
+    call write_inopt(kb_cgs,'kb_cgs','DEM clump bond spring constant (g/s^2 per cm stretch; 0=no clumps)',iunit)
+    call write_inopt(bond_reach,'bond_reach','max surface gap for a clump bond, as a fraction of R_i+R_j',iunit)
  endif
  if (gravity) then
     call write_inopt(icreate_sinks,'icreate_sinks','allow automatic sink particle creation',iunit)
@@ -2653,9 +2655,9 @@ end subroutine write_options_ptmass
 subroutine read_options_ptmass(db,nerr)
  use io,           only:warning,fatal
  use subgroup,     only:r_neigh
- use dim,          only:use_sinktree
+ use dim,          only:use_sinktree,mpi
  use infile_utils, only:inopts,read_inopt
- use dem,          only:kn_cgs,epsilon_n_dem,ct_dem,kt_cgs,coh_gap_max_cgs,dem_cohesion_summary
+ use dem,          only:kn_cgs,epsilon_n_dem,ct_dem,kt_cgs,coh_gap_max_cgs,kb_cgs,bond_reach,dem_cohesion_summary
  type(inopts), intent(inout) :: db(:)
  integer,      intent(inout) :: nerr
  character(len=*), parameter :: label = 'read_infile'
@@ -2667,6 +2669,8 @@ subroutine read_options_ptmass(db,nerr)
  call read_inopt(ct_dem,'ct_dem',db,errcount=nerr,min=0.,default=ct_dem)
  call read_inopt(kt_cgs,'kt_cgs',db,errcount=nerr,min=0.,default=kt_cgs)
  call read_inopt(coh_gap_max_cgs,'coh_gap_max_cgs',db,errcount=nerr,min=0.,default=coh_gap_max_cgs)
+ call read_inopt(kb_cgs,'kb_cgs',db,errcount=nerr,min=0.,default=kb_cgs)
+ call read_inopt(bond_reach,'bond_reach',db,errcount=nerr,min=0.,default=bond_reach)
  call read_inopt(rho_crit_cgs,'rho_crit_cgs',db,errcount=nerr,min=0.,default=rho_crit_cgs)
  call read_inopt(r_crit,'r_crit',db,errcount=nerr,min=0.,default=r_crit)
  call read_inopt(h_acc,'h_acc',db,errcount=nerr,min=0.,default=h_acc)
@@ -2692,7 +2696,12 @@ subroutine read_options_ptmass(db,nerr)
 
  if (icreate_sinks==1 .and. r_merge_uncond < 2.0*h_acc) call warning(label,'Strongly suggest r_merge_uncond >= 2.0*h_acc')
 
- if (isink_potential == 2) call dem_cohesion_summary
+ !
+ ! clump bonds look up the clump ID of particle i by its local index in
+ ! the force loop, which is not valid for cells sent from another MPI rank
+ !
+ if (mpi .and. kb_cgs > 0.) call fatal(label,'DEM clump bonds (kb_cgs > 0) are not supported with MPI')
+ if (isink_potential == 2 .or. kb_cgs > 0.) call dem_cohesion_summary
 
 end subroutine read_options_ptmass
 

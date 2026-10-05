@@ -17,3 +17,4 @@
  apophis_spin_axis_x =       0.000    ! spin axis (unused when period=0)
  apophis_spin_axis_y =       0.000    !
  apophis_spin_axis_z =       1.000    !
+        packing_file =                ! pre-built body dump (settled+cropped, optionally clumped); blank = build one

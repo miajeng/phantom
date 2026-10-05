@@ -927,7 +927,7 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
                        ihsoft,idem
  use dem,         only:get_ssdem_force
  use dim,         only:maxalpha,maxp,mhd_nonideal,gravity,gr,use_apr,isothermal,use_sinktree,disc_viscosity,track_lum
- use part,        only:rhoh,dvdx,aprmassoftype,shortsinktree
+ use part,        only:rhoh,dvdx,aprmassoftype,shortsinktree,iclump
  use nicil,       only:nimhd_get_jcbcb,nimhd_get_dBdt
  use eos,         only:ieos,eos_is_non_ideal,icooling
  use eos_stamatellos, only:gradP_cool,getopac_opdep
@@ -1036,6 +1036,7 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
  logical :: usej
  integer :: iamtypei
  real    :: veli_dem(3),velj_dem(3),spin_dem(3),Ri_dem,Rj_dem,dtdem
+ logical :: bonded_dem
  real    :: radFi(3),radFj(3),radRj,radDFWi,radDFWj,c_code,radkappai,radkappaj,&
             radDi,radDj,radeni,radenj,radlambdai,radlambdaj
  real    :: xi,yi,zi,densi,eni,metrici(0:3,0:3,2)
@@ -2004,9 +2005,12 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
              Rj_dem   = 1./hj1
              veli_dem = (/vxi,vyi,vzi/)
              velj_dem = (/vxj,vyj,vzj/)
+             !--i indexes the local particle arrays here: without MPI no cell
+             !  is ever remote. The MPI build refuses clumps (read_options_ptmass).
+             bonded_dem = (iclump(i) /= 0 .and. iclump(i) == iclump(j))
              call get_ssdem_force(Ri_dem,Rj_dem,pmassi,pmassj,rij1,dx,dy,dz,&
                                   fsum(ifxi),fsum(ifyi),fsum(ifzi),&
-                                  veli_dem,velj_dem,spin_dem,spin_dem,dtdem)
+                                  veli_dem,velj_dem,spin_dem,spin_dem,dtdem,bonded_dem)
           endif
        endif ifgas
 
