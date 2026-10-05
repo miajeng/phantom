@@ -79,6 +79,22 @@ module part
  real, allocatable :: dwdem(:,:)
  character(len=*), parameter :: wdem_label(3) = (/'wdemx','wdemy','wdemz'/)
 !
+!--DEM contact history for tangential friction: for each grain, up to
+!  maxcontact touching partners (by iorig, 0 = empty slot) and the
+!  tangential spring displacement xi of each contact. The committed lists
+!  hold the state at the start of the step; every force evaluation builds
+!  the trial (_new) lists from them, and step_leapfrog commits the trial
+!  lists once the step has converged, so velocity iterations do not
+!  advance xi more than once. Allocated only when friction is on
+!  (allocate_dem_contacts), so runs without it pay no memory.
+!
+ integer, parameter :: maxcontact = 16
+ integer(kind=8), allocatable :: icontact(:,:),icontact_new(:,:)
+ real,            allocatable :: xicontact(:,:,:),xicontact_new(:,:,:)
+!  rolling (1:3) and twisting (4) angular displacement of each contact,
+!  for rolling and twisting resistance; same slots and life cycle as xi
+ real,            allocatable :: rotcontact(:,:,:),rotcontact_new(:,:,:)
+!
 !--storage of dust properties
 !
  real :: grainsize(maxdusttypes)
@@ -594,6 +610,12 @@ subroutine deallocate_part
  if (allocated(wdem))     deallocate(wdem)
  if (allocated(wdempred)) deallocate(wdempred)
  if (allocated(dwdem))    deallocate(dwdem)
+ if (allocated(icontact))      deallocate(icontact)
+ if (allocated(icontact_new))  deallocate(icontact_new)
+ if (allocated(xicontact))     deallocate(xicontact)
+ if (allocated(xicontact_new)) deallocate(xicontact_new)
+ if (allocated(rotcontact))     deallocate(rotcontact)
+ if (allocated(rotcontact_new)) deallocate(rotcontact_new)
  if (allocated(iseed_sink))   deallocate(iseed_sink)
  if (allocated(dustprop))     deallocate(dustprop)
  if (allocated(dustgasprop))  deallocate(dustgasprop)
@@ -771,6 +793,30 @@ subroutine init_part
  dwdem(:,:) = 0.
 
 end subroutine init_part
+
+!----------------------------------------------------------------
+!+
+!  allocate the DEM contact history, once, when friction is first used
+!+
+!----------------------------------------------------------------
+subroutine allocate_dem_contacts
+ use allocutils, only:allocate_array
+
+ if (allocated(icontact)) return
+ ! allocutils has no 2D integer(kind=8) routine, so the IDs use allocate
+ allocate(icontact(maxcontact,maxp),icontact_new(maxcontact,maxp))
+ call allocate_array('xicontact', xicontact, 3, maxcontact, maxp)
+ call allocate_array('xicontact_new', xicontact_new, 3, maxcontact, maxp)
+ call allocate_array('rotcontact', rotcontact, 4, maxcontact, maxp)
+ call allocate_array('rotcontact_new', rotcontact_new, 4, maxcontact, maxp)
+ icontact = 0
+ icontact_new = 0
+ xicontact = 0.
+ xicontact_new = 0.
+ rotcontact = 0.
+ rotcontact_new = 0.
+
+end subroutine allocate_dem_contacts
 
 !----------------------------------------------------------------
 !+
@@ -1336,6 +1382,14 @@ subroutine copy_particle(src,dst,new_part)
  wdem(:,dst) = wdem(:,src)
  wdempred(:,dst) = wdempred(:,src)
  dwdem(:,dst) = dwdem(:,src)
+ if (allocated(icontact)) then
+    icontact(:,dst)        = icontact(:,src)
+    icontact_new(:,dst)    = icontact_new(:,src)
+    xicontact(:,:,dst)     = xicontact(:,:,src)
+    xicontact_new(:,:,dst) = xicontact_new(:,:,src)
+    rotcontact(:,:,dst)     = rotcontact(:,:,src)
+    rotcontact_new(:,:,dst) = rotcontact_new(:,:,src)
+ endif
 
 end subroutine copy_particle
 
@@ -1453,6 +1507,14 @@ subroutine copy_particle_all(src,dst,new_part)
  wdem(:,dst) = wdem(:,src)
  wdempred(:,dst) = wdempred(:,src)
  dwdem(:,dst) = dwdem(:,src)
+ if (allocated(icontact)) then
+    icontact(:,dst)        = icontact(:,src)
+    icontact_new(:,dst)    = icontact_new(:,src)
+    xicontact(:,:,dst)     = xicontact(:,:,src)
+    xicontact_new(:,:,dst) = xicontact_new(:,:,src)
+    rotcontact(:,:,dst)     = rotcontact(:,:,src)
+    rotcontact_new(:,:,dst) = rotcontact_new(:,:,src)
+ endif
 
 end subroutine copy_particle_all
 

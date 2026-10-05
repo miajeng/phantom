@@ -931,7 +931,7 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
                        ihsoft,idem
  use dem,         only:get_ssdem_force
  use dim,         only:maxalpha,maxp,mhd_nonideal,gravity,gr,use_apr,isothermal,use_sinktree,disc_viscosity,track_lum
- use part,        only:rhoh,dvdx,aprmassoftype,shortsinktree,iclump,wdempred
+ use part,        only:rhoh,dvdx,aprmassoftype,shortsinktree,iclump,wdempred,iorig,icontact_new
  use nicil,       only:nimhd_get_jcbcb,nimhd_get_dBdt
  use eos,         only:ieos,eos_is_non_ideal,icooling
  use eos_stamatellos, only:gradP_cool,getopac_opdep
@@ -1137,6 +1137,11 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
  fsum(:) = 0.
  vsigmax = 0.
  pmassonrhoi = pmassi*rho1i
+ !
+ ! the trial DEM contact list of i is rebuilt from scratch by every force
+ ! evaluation, from the committed list (see get_ssdem_force)
+ !
+ if (allocated(icontact_new) .and. iamtypei == idem) icontact_new(:,i) = 0
  hfacgrkern  = hi41*cnormk*gradhi
 
  ! default settings for active/phase if iphase not used
@@ -2000,6 +2005,8 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
              !    radius : taken as R=h here, with h = delta/2 in setup
              !    spin   : the predicted grain spins, wdempred; the torque on
              !             i is summed into fsum(idwdemxi:idwdemzi)
+             !    history: the friction contact history of i, keyed by the
+             !             permanent ID iorig(j), advanced over the step dt
              !    dtdem  : discarded here; the contact timestep is applied
              !             globally in derivs via get_dem_dt, since it depends
              !             only on the smallest particle mass and kn
@@ -2015,7 +2022,7 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
              call get_ssdem_force(Ri_dem,Rj_dem,pmassi,pmassj,rij1,dx,dy,dz,&
                                   fsum(ifxi),fsum(ifyi),fsum(ifzi),&
                                   veli_dem,velj_dem,wdempred(:,i),wdempred(:,j),dtdem,bonded_dem,&
-                                  fsum(idwdemxi:idwdemzi))
+                                  fsum(idwdemxi:idwdemzi),i,iorig(j),dt)
           endif
        endif ifgas
 

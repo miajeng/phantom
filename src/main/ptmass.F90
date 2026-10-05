@@ -2587,7 +2587,8 @@ subroutine write_options_ptmass(iunit)
  use infile_utils, only:write_inopt
  use subgroup,     only:r_neigh
  use dim,          only:use_sinktree
- use dem,          only:kn_cgs,epsilon_n_dem,ct_dem,kt_cgs,coh_gap_max_cgs,kb_cgs,bond_reach
+ use dem,          only:kn_cgs,epsilon_n_dem,epsilon_t_dem,mu_s,ks_cgs,kt_cgs,coh_gap_max_cgs,kb_cgs,bond_reach,&
+                         cohesion_pa,beta_dem,mu_r,mu_t
  use part,         only:npartoftype,idem
  integer, intent(in) :: iunit
 
@@ -2604,7 +2605,13 @@ subroutine write_options_ptmass(iunit)
  if (isink_potential == 2 .or. npartoftype(idem) > 0) then
     call write_inopt(kn_cgs,'kn_cgs','DEM normal spring constant (g/s^2 per cm overlap)',iunit)
     call write_inopt(epsilon_n_dem,'epsilon_n_dem','DEM normal coefficient of restitution [0=inelastic,1=elastic]',iunit)
-    call write_inopt(ct_dem,'ct_dem','DEM tangential damping coefficient',iunit)
+    call write_inopt(mu_s,'mu_s','DEM static (sliding) friction coefficient (0=frictionless)',iunit)
+    call write_inopt(ks_cgs,'ks_cgs','DEM tangential spring constant (g/s^2; 0=(2/7)*kn_cgs)',iunit)
+    call write_inopt(epsilon_t_dem,'epsilon_t_dem','DEM tangential coefficient of restitution (0,1]',iunit)
+    call write_inopt(mu_r,'mu_r','DEM rolling friction coefficient (0=off; pkdgrav gravel 1.05)',iunit)
+    call write_inopt(mu_t,'mu_t','DEM twisting friction coefficient (0=off; pkdgrav gravel 1.3)',iunit)
+    call write_inopt(cohesion_pa,'cohesion_pa','DEM interparticle cohesion c (Pa; pkdgrav granular bridge; 0=off)',iunit)
+    call write_inopt(beta_dem,'beta_dem','DEM shape parameter: contact radius = beta*Rbar',iunit)
     call write_inopt(kt_cgs,'kt_cgs','DEM tensile spring constant (g/s^2 per cm gap; 0=off)',iunit)
     call write_inopt(coh_gap_max_cgs,'coh_gap_max_cgs','max surface gap for DEM bond (cm; 0=1% of R_i+R_j)',iunit)
     call write_inopt(kb_cgs,'kb_cgs','DEM clump bond spring constant (g/s^2 per cm stretch; 0=no clumps)',iunit)
@@ -2657,7 +2664,8 @@ subroutine read_options_ptmass(db,nerr)
  use subgroup,     only:r_neigh
  use dim,          only:use_sinktree,mpi
  use infile_utils, only:inopts,read_inopt
- use dem,          only:kn_cgs,epsilon_n_dem,ct_dem,kt_cgs,coh_gap_max_cgs,kb_cgs,bond_reach,dem_cohesion_summary
+ use dem,          only:kn_cgs,epsilon_n_dem,epsilon_t_dem,mu_s,ks_cgs,kt_cgs,coh_gap_max_cgs,&
+                         kb_cgs,bond_reach,dem_cohesion_summary,cohesion_pa,beta_dem,mu_r,mu_t
  type(inopts), intent(inout) :: db(:)
  integer,      intent(inout) :: nerr
  character(len=*), parameter :: label = 'read_infile'
@@ -2666,7 +2674,15 @@ subroutine read_options_ptmass(db,nerr)
  call read_inopt(isink_potential,'isink_potential',db,errcount=nerr,min=0,max=2,default=isink_potential)
  call read_inopt(kn_cgs,'kn_cgs',db,errcount=nerr,min=0.,default=kn_cgs)
  call read_inopt(epsilon_n_dem,'epsilon_n_dem',db,errcount=nerr,min=0.,max=1.,default=epsilon_n_dem)
- call read_inopt(ct_dem,'ct_dem',db,errcount=nerr,min=0.,default=ct_dem)
+ ! ct_dem (an unused tangential damping constant) is gone: an old .in that
+ ! still has it only gets an "unknown variable" warning
+ call read_inopt(mu_s,'mu_s',db,errcount=nerr,min=0.,default=mu_s)
+ call read_inopt(ks_cgs,'ks_cgs',db,errcount=nerr,min=0.,default=ks_cgs)
+ call read_inopt(epsilon_t_dem,'epsilon_t_dem',db,errcount=nerr,min=tiny(0.),max=1.,default=epsilon_t_dem)
+ call read_inopt(mu_r,'mu_r',db,errcount=nerr,min=0.,default=mu_r)
+ call read_inopt(mu_t,'mu_t',db,errcount=nerr,min=0.,default=mu_t)
+ call read_inopt(cohesion_pa,'cohesion_pa',db,errcount=nerr,min=0.,default=cohesion_pa)
+ call read_inopt(beta_dem,'beta_dem',db,errcount=nerr,min=tiny(0.),max=1.,default=beta_dem)
  call read_inopt(kt_cgs,'kt_cgs',db,errcount=nerr,min=0.,default=kt_cgs)
  call read_inopt(coh_gap_max_cgs,'coh_gap_max_cgs',db,errcount=nerr,min=0.,default=coh_gap_max_cgs)
  call read_inopt(kb_cgs,'kb_cgs',db,errcount=nerr,min=0.,default=kb_cgs)
@@ -2701,6 +2717,12 @@ subroutine read_options_ptmass(db,nerr)
  ! the force loop, which is not valid for cells sent from another MPI rank
  !
  if (mpi .and. kb_cgs > 0.) call fatal(label,'DEM clump bonds (kb_cgs > 0) are not supported with MPI')
+ !
+ ! the granular-bridge (cohesion_pa) and tensile-spring (kt_cgs) cohesion
+ ! models describe the same physics two ways: refuse to stack them
+ !
+ if (cohesion_pa > 0. .and. kt_cgs > 0.) &
+    call fatal(label,'set only one DEM cohesion model: cohesion_pa (pkdgrav) or kt_cgs (tensile spring)')
  if (isink_potential == 2 .or. kb_cgs > 0.) call dem_cohesion_summary
 
 end subroutine read_options_ptmass

@@ -39,7 +39,7 @@ subroutine derivs(icall,npart,nactive,xyzh,vxyzu,fxyzu,fext,divcurlv,divcurlB,&
                   dustevol,ddustevol,filfac,dustfrac,eos_vars,time,dt,dtnew,pxyzu,&
                   dens,metrics,apr_level)
  use dim,            only:mhd,fast_divcurlB,gr,periodic,do_radiation,driving,&
-                          sink_radiation,use_dustgrowth,ind_timesteps,isothermal
+                          sink_radiation,use_dustgrowth,ind_timesteps,isothermal,mpi,maxgradh,maxp
  use io,             only:iprint,fatal,error
  use neighkdtree,    only:build_tree
  use densityforce,   only:densityiterate
@@ -57,7 +57,8 @@ subroutine derivs(icall,npart,nactive,xyzh,vxyzu,fxyzu,fext,divcurlv,divcurlB,&
  use forces,         only:force
  use part,           only:mhd,gradh,alphaind,igas,iradxi,ifluxx,ifluxy,ifluxz,ithick,&
                           idem,npartoftype,massoftype
- use dem,            only:get_dem_dt
+ use dem,            only:get_dem_dt,dem_friction_on,dem_friction_summary,dem_contact_check
+ use part,           only:icontact,allocate_dem_contacts,iphase,iamtype
  use derivutils,     only:do_timing
  use cons2prim,      only:cons2primall,cons2prim_everything
  use metric_tools,   only:init_metric
@@ -91,6 +92,7 @@ subroutine derivs(icall,npart,nactive,xyzh,vxyzu,fxyzu,fext,divcurlv,divcurlB,&
  integer(kind=1), intent(in)    :: apr_level(:)
  integer                     :: ierr,i
  real(kind=4)                :: t1,tcpu1,tlast,tcpulast
+ logical, save               :: dem_checked = .false.
 
  t1    = 0.
  tcpu1 = 0.
@@ -133,6 +135,18 @@ subroutine derivs(icall,npart,nactive,xyzh,vxyzu,fxyzu,fext,divcurlv,divcurlB,&
 ! calculate density by direct summation
 !
 
+ !
+ ! With DEM grains the density step is skipped, so nothing ever set gradh:
+ ! the force then read uninitialised memory for the grad-h and gravity
+ ! softening corrections. When that memory happened to be zero force.F90
+ ! printed "stored gradh is zero, resetting to 1" and used 1 and 0, the
+ ! right values for a fixed h; when it was not, the softened gravity
+ ! between nearby grains came out wrong, by any amount. Set them here.
+ !
+ if (npartoftype(idem) > 0 .and. maxgradh==maxp) then
+    gradh(1,1:npart) = 1.
+    gradh(2,1:npart) = 0.
+ endif
  if (icall==1 .and. npartoftype(idem) == 0) then
     call densityiterate(1,npart,nactive,xyzh,vxyzu,divcurlv,divcurlB,Bevol,&
                         stressmax,fxyzu,fext,alphaind,gradh,rad,radprop,dvdx,apr_level)
@@ -190,6 +204,25 @@ subroutine derivs(icall,npart,nactive,xyzh,vxyzu,fxyzu,fext,divcurlv,divcurlB,&
  !
  stressmax = 0.
  if (sinks_have_heating(nptmass,xyzmh_ptmass)) call ptmass_calc_enclosed_mass(nptmass,npart,xyzh)
+ !
+ ! DEM friction needs a contact history, made the first time it is used.
+ ! The history is looked up by the local index of particle i, which a
+ ! cell sent from another MPI rank does not have, and it is committed once
+ ! per global step, which individual timesteps do not have: refuse both.
+ !
+ !
+ ! once per run, check the cohesive overlap against the smallest grain
+ !
+ if (npartoftype(idem) > 0 .and. .not.dem_checked) then
+    call dem_contact_check(minval(xyzh(4,1:npart),mask=(iamtype(iphase(1:npart))==idem .and. xyzh(4,1:npart) > 0.)))
+    dem_checked = .true.
+ endif
+ if (npartoftype(idem) > 0 .and. dem_friction_on() .and. .not.allocated(icontact)) then
+    if (mpi) call fatal('derivs','DEM friction (mu_s > 0) is not supported with MPI')
+    if (ind_timesteps) call fatal('derivs','DEM friction (mu_s > 0) needs global timesteps (IND_TIMESTEPS=no)')
+    call allocate_dem_contacts
+    call dem_friction_summary
+ endif
  call force(icall,npart,xyzh,vxyzu,fxyzu,divcurlv,divcurlB,Bevol,dBevol,&
             rad,drad,radprop,dustprop,dustgasprop,Vrel_disp,dustfrac,ddustevol,fext,fxyz_drag,&
             ipart_rhomax,dt,stressmax,eos_vars,dens,metrics,apr_level)

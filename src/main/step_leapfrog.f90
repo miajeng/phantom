@@ -109,7 +109,8 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
                           pxyzu_ptmass,metrics_ptmass
  use part,           only:n_group,n_ingroup,n_sing,gtgrad,group_info,bin_info,nmatrix
  use part,           only:ibin,ibin_old,twas,iactive,ibin_wake
- use part,           only:wdem,wdempred,dwdem
+ use part,           only:wdem,wdempred,dwdem,icontact,icontact_new,xicontact,xicontact_new,&
+                          rotcontact,rotcontact_new
  use part,           only:metricderivs,metricderivs_ptmass
  use deriv,          only:derivs
  use timestep,       only:dterr,bignumber,tolv
@@ -763,6 +764,21 @@ subroutine step(npart,nactive,t,dtsph,dtextforce,dtnew)
        print *, "end of iteration", maxval(vxyzu(4,:)), minval(vxyzu(4,:))
     endif
  enddo iterations
+
+ !
+ ! commit the DEM friction contact history built by the last (converged)
+ ! force evaluation, so each step advances the tangential springs once
+ !
+ if (allocated(icontact)) then
+    !$omp parallel do default(none) shared(npart,icontact,icontact_new,xicontact,xicontact_new) &
+    !$omp shared(rotcontact,rotcontact_new) private(i)
+    do i=1,npart
+       icontact(:,i)     = icontact_new(:,i)
+       xicontact(:,:,i)  = xicontact_new(:,:,i)
+       rotcontact(:,:,i) = rotcontact_new(:,:,i)
+    enddo
+    !$omp end parallel do
+ endif
 
  !
  ! 2nd ptmass kick (no need to predict vel ptmass as they are not coupled to any vel dep force)
