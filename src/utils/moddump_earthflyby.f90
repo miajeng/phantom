@@ -97,8 +97,15 @@ subroutine modify_dump(npart,npartoftype,massoftype,xyzh,vxyzu)
  ntmp = 0
  xyzmh_tmp = 0.
  vxyz_tmp  = 0.
+ ! set_binary only honours f in its Campbell-elements branch, which needs
+ ! all three angles present. Given f alone it silently starts the orbit at
+ ! "apastron", |a|(1+e), which for a hyperbola is not on the orbit at all:
+ ! the body came out bound, too close and too slow. Zero angles keep the
+ ! orbit in the x-y plane.
+ !
  call set_binary(m1,m2,semia,ecc,0.,earthr/udist, &
-                 xyzmh_tmp,vxyz_tmp,ntmp,ierr,f=f,verbose=(id==master))
+                 xyzmh_tmp,vxyz_tmp,ntmp,ierr,f=f,posang_ascnode=0.,arg_peri=0.,incl=0., &
+                 verbose=(id==master))
  if (ierr /= 0) call fatal('moddump_earthflyby','set_binary failed',var='ierr',ival=ierr)
 
  x1 = xyzmh_tmp(1:3,1); v1 = vxyz_tmp(1:3,1)
@@ -121,7 +128,14 @@ subroutine modify_dump(npart,npartoftype,massoftype,xyzh,vxyzu)
  xyzmh_ptmass(1:3,1)   = x2
  xyzmh_ptmass(4,1)     = m2
  xyzmh_ptmass(ihacc,1) = earthr/udist
- xyzmh_ptmass(ihsoft,1)= earthr/udist
+ !
+ ! Unsoftened, as the ephemeris setup has it. A softening length of one
+ ! Earth radius softens the sink's gravity out to radkern*hsoft = 2 R_earth
+ ! (~12,700 km), which covers every tidal pericentre of interest: the body
+ ! passed ~400 km wider than requested at rp = 7000 km, and felt a weaker
+ ! tidal field all the while. Grains reaching R_earth are still accreted.
+ !
+ xyzmh_ptmass(ihsoft,1)= 0.
  vxyz_ptmass(1:3,1)    = v2
 
  if (id==master) then
