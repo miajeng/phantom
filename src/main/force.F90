@@ -931,7 +931,7 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
                        ihsoft,idem
  use dem,         only:get_ssdem_force
  use dim,         only:maxalpha,maxp,mhd_nonideal,gravity,gr,use_apr,isothermal,use_sinktree,disc_viscosity,track_lum
- use part,        only:rhoh,dvdx,aprmassoftype,shortsinktree,iclump,wdempred,iorig,icontact_new
+ use part,        only:rhoh,dvdx,aprmassoftype,shortsinktree,iclump,wdempred,iorig,icontact_new,ibond_new
  use nicil,       only:nimhd_get_jcbcb,nimhd_get_dBdt
  use eos,         only:ieos,eos_is_non_ideal,icooling
  use eos_stamatellos, only:gradP_cool,getopac_opdep
@@ -1142,6 +1142,7 @@ subroutine compute_forces(i,iamgasi,iamdusti,xpartveci,hi,hi1,hi21,hi41,gradhi,g
  ! evaluation, from the committed list (see get_ssdem_force)
  !
  if (allocated(icontact_new) .and. iamtypei == idem) icontact_new(:,i) = 0
+ if (allocated(ibond_new) .and. iamtypei == idem) ibond_new(:,i) = 0
  hfacgrkern  = hi41*cnormk*gradhi
 
  ! default settings for active/phase if iphase not used

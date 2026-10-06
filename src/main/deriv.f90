@@ -57,8 +57,10 @@ subroutine derivs(icall,npart,nactive,xyzh,vxyzu,fxyzu,fext,divcurlv,divcurlB,&
  use forces,         only:force
  use part,           only:mhd,gradh,alphaind,igas,iradxi,ifluxx,ifluxy,ifluxz,ithick,&
                           idem,npartoftype,massoftype
- use dem,            only:get_dem_dt,dem_friction_on,dem_friction_summary,dem_contact_check
- use part,           only:icontact,allocate_dem_contacts,iphase,iamtype
+ use dem,            only:get_dem_dt,dem_friction_on,dem_friction_summary,dem_contact_check,&
+                          dem_bonds_on,dem_bonds_forming,dem_commit_history
+ use part,           only:icontact,allocate_dem_contacts,iphase,iamtype,&
+                          ibond,allocate_dem_bonds,dem_bonds_formed
  use derivutils,     only:do_timing
  use cons2prim,      only:cons2primall,cons2prim_everything
  use metric_tools,   only:init_metric
@@ -223,10 +225,24 @@ subroutine derivs(icall,npart,nactive,xyzh,vxyzu,fxyzu,fext,divcurlv,divcurlB,&
     call allocate_dem_contacts
     call dem_friction_summary
  endif
+ !
+ ! Boulder bonds are made by the first force evaluation (unless the dump
+ ! brought them), then committed straight away, below.
+ !
+ if (npartoftype(idem) > 0 .and. dem_bonds_on(npart)) then
+    if (.not.allocated(ibond)) call allocate_dem_bonds
+    dem_bonds_forming = .not.dem_bonds_formed
+ endif
  call force(icall,npart,xyzh,vxyzu,fxyzu,divcurlv,divcurlB,Bevol,dBevol,&
             rad,drad,radprop,dustprop,dustgasprop,Vrel_disp,dustfrac,ddustevol,fext,fxyz_drag,&
             ipart_rhomax,dt,stressmax,eos_vars,dens,metrics,apr_level)
  call do_timing('force',tlast,tcpulast)
+ if (dem_bonds_forming) then
+    call dem_commit_history(npart,xyzh)
+    dem_bonds_forming = .false.
+    dem_bonds_formed  = .true.
+    write(iprint,"(a,i0,a)") ' DEM boulder bonds made: ',count(ibond(:,1:npart) /= 0)/2,' bonds'
+ endif
 
  !
  ! compute growth rate of dust particles

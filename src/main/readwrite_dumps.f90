@@ -60,7 +60,8 @@ subroutine write_fulldump(t,dumpfile,ntotal,iorder,sphNG)
  !dvdx,dvdx_label,&
                    rad,rad_label,radprop,radprop_label,do_radiation,maxirad,maxradprop,itemp,igasP,igamma,&
                    iorig,iseed_sink,iX,iZ,imu,nucleation,nucleation_label,n_nucleation,tau,itau_alloc,tau_lucy,itauL_alloc,&
-                   luminosity,eta_nimhd,eta_nimhd_label,apr_level,iclump,wdem,wdem_label,idem
+                   luminosity,eta_nimhd,eta_nimhd_label,apr_level,iclump,wdem,wdem_label,idem,&
+                   ibond,maxbond,dem_bonds_formed
  use part,  only:metrics,metricderivs,tmunus
  use options,    only:use_dustfrac,use_porosity,use_var_comp,icooling
  use dump_utils, only:tag,open_dumpfile_w,allocate_header,&
@@ -81,7 +82,9 @@ subroutine write_fulldump(t,dumpfile,ntotal,iorder,sphNG)
  integer(kind=8)    :: ilen(4)
  integer            :: nums(ndatatypes,4)
  integer            :: ipass,k,l,ioffset
- integer            :: ierr,nerr
+ integer            :: ierr,nerr,kslot,nslot
+ integer(kind=8), allocatable :: ibtmp(:)
+ character(len=7)   :: bondtag
  integer            :: nblocks,nblockarrays,narraylengths
  integer(kind=8)    :: nparttot
  logical            :: sphNGdump,write_itype,use_gas
@@ -274,6 +277,24 @@ subroutine write_fulldump(t,dumpfile,ntotal,iorder,sphNG)
        if (any(iclump(1:npart) /= 0)) call write_array(1,iclump,'iclump',npart,k,ipass,idump,nums,nerr)
        ! DEM grain spins, whenever there are DEM grains, so a restart keeps them
        if (npartoftypetot(idem) > 0) call write_array(1,wdem,wdem_label,3,npart,k,ipass,idump,nums,nerr)
+       ! DEM boulder bond partner lists (by iorig), one array per slot in use,
+       ! so that a restart keeps broken bonds broken. Once bonds have been
+       ! made at least one array is written, even if every bond has broken:
+       ! a dump without any would make a restart glue the boulders again.
+       if (allocated(ibond) .and. dem_bonds_formed) then
+          nslot = 1
+          do kslot=1,maxbond
+             if (any(ibond(kslot,1:npart) /= 0)) nslot = kslot
+          enddo
+          if (nslot > 0) then
+             if (.not.allocated(ibtmp)) allocate(ibtmp(npart))
+             do kslot=1,nslot
+                write(bondtag,"(a,i2.2)") 'ibond',kslot
+                ibtmp(1:npart) = ibond(kslot,1:npart)
+                call write_array(1,ibtmp,bondtag,npart,k,ipass,idump,nums,nerr)
+             enddo
+          endif
+       endif
 
        if (use_krome) then
           call write_array(1,abundance,abundance_label,krome_nmols,npart,k,ipass,idump,nums,nerr)
@@ -973,7 +994,7 @@ subroutine read_phantom_arrays(i1,i2,noffset,narraylengths,nums,npartread,nparto
                         rad,rad_label,radprop,radprop_label,do_radiation,maxirad,maxradprop,ifluxx,ifluxy,ifluxz, &
                         nucleation,nucleation_label,n_nucleation,ikappa,tau,itau_alloc,tau_lucy,itauL_alloc,&
                         ithick,ilambda,iorig,iseed_sink,dt_in,krome_nmols,T_gas_cool,apr_level,iclump,&
-                        wdem,wdem_label
+                        wdem,wdem_label,ibond,maxbond,allocate_dem_bonds,dem_bonds_formed
  use eos_stamatellos, only:ttherm_store,ueqi_store,tau_store,du_store
  use sphNGutils, only:mass_sphng,got_mass,set_gas_particle_mass
  use options,    only:use_porosity
@@ -994,8 +1015,10 @@ subroutine read_phantom_arrays(i1,i2,noffset,narraylengths,nums,npartread,nparto
  logical                :: got_iorig,got_iclump,got_apr_level,got_taumean,got_ueqi,got_dudt,got_ttherm
  logical                :: got_wdem(3)
  character(len=lentag) :: tag,tagarr(64)
- integer :: k,i,iarr,ik,ndustfraci
+ integer :: k,i,iarr,ik,ndustfraci,kslot,ierrk
  real, allocatable :: tmparray(:)
+ integer(kind=8), allocatable :: ibtmp(:)
+ logical :: got_ibond
 
  !
  !--read array type 1 arrays
@@ -1125,6 +1148,18 @@ subroutine read_phantom_arrays(i1,i2,noffset,narraylengths,nums,npartread,nparto
              call read_array(iorig,'iorig',got_iorig,ik,i1,i2,noffset,idisk1,tag,match,ierr)
              call read_array(iclump,'iclump',got_iclump,ik,i1,i2,noffset,idisk1,tag,match,ierr)
              call read_array(wdem,wdem_label,got_wdem,ik,i1,i2,noffset,idisk1,tag,match,ierr)
+             ! DEM boulder bond partner lists, ibond01, ibond02, ...
+             if (tag(1:5) == 'ibond' .and. .not.match) then
+                read(tag(6:7),*,iostat=ierrk) kslot
+                if (ierrk == 0 .and. kslot >= 1 .and. kslot <= maxbond) then
+                   if (.not.allocated(ibond)) call allocate_dem_bonds
+                   if (.not.allocated(ibtmp)) allocate(ibtmp(size(ibond,2)))
+                   ibtmp = 0
+                   call read_array(ibtmp,trim(tag),got_ibond,ik,i1,i2,noffset,idisk1,tag,match,ierr)
+                   ibond(kslot,i1:i2) = ibtmp(i1:i2)
+                   dem_bonds_formed = .true.
+                endif
+             endif
              if (inject_parts) call read_array(iseed_sink,'iseed_sink',got_iseed_sink,ik,i1,i2,noffset,idisk1,tag,match,ierr)
 
              if (do_radiation) then

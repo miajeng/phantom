@@ -2588,7 +2588,7 @@ subroutine write_options_ptmass(iunit)
  use subgroup,     only:r_neigh
  use dim,          only:use_sinktree
  use dem,          only:kn_cgs,epsilon_n_dem,epsilon_t_dem,mu_s,ks_cgs,kt_cgs,coh_gap_max_cgs,kb_cgs,bond_reach,&
-                         cohesion_pa,beta_dem,mu_r,mu_t
+                         cohesion_pa,beta_dem,mu_r,mu_t,bond_lambda,bond_sigma_pa,bond_tau_pa
  use part,         only:npartoftype,idem
  integer, intent(in) :: iunit
 
@@ -2616,6 +2616,9 @@ subroutine write_options_ptmass(iunit)
     call write_inopt(coh_gap_max_cgs,'coh_gap_max_cgs','max surface gap for DEM bond (cm; 0=1% of R_i+R_j)',iunit)
     call write_inopt(kb_cgs,'kb_cgs','DEM clump bond spring constant (g/s^2 per cm stretch; 0=no clumps)',iunit)
     call write_inopt(bond_reach,'bond_reach','max surface gap for a clump bond, as a fraction of R_i+R_j',iunit)
+    call write_inopt(bond_lambda,'bond_lambda','clump bond radius, as a fraction of the smaller grain radius',iunit)
+    call write_inopt(bond_sigma_pa,'bond_sigma_pa','clump bond tensile strength (Pa; 0=stretch limit only)',iunit)
+    call write_inopt(bond_tau_pa,'bond_tau_pa','clump bond shear strength (Pa; 0=stretch limit only)',iunit)
  endif
  if (gravity) then
     call write_inopt(icreate_sinks,'icreate_sinks','allow automatic sink particle creation',iunit)
@@ -2665,7 +2668,8 @@ subroutine read_options_ptmass(db,nerr)
  use dim,          only:use_sinktree,mpi
  use infile_utils, only:inopts,read_inopt
  use dem,          only:kn_cgs,epsilon_n_dem,epsilon_t_dem,mu_s,ks_cgs,kt_cgs,coh_gap_max_cgs,&
-                         kb_cgs,bond_reach,dem_cohesion_summary,cohesion_pa,beta_dem,mu_r,mu_t
+                         kb_cgs,bond_reach,dem_cohesion_summary,cohesion_pa,beta_dem,mu_r,mu_t,&
+                         bond_lambda,bond_sigma_pa,bond_tau_pa
  type(inopts), intent(inout) :: db(:)
  integer,      intent(inout) :: nerr
  character(len=*), parameter :: label = 'read_infile'
@@ -2687,6 +2691,9 @@ subroutine read_options_ptmass(db,nerr)
  call read_inopt(coh_gap_max_cgs,'coh_gap_max_cgs',db,errcount=nerr,min=0.,default=coh_gap_max_cgs)
  call read_inopt(kb_cgs,'kb_cgs',db,errcount=nerr,min=0.,default=kb_cgs)
  call read_inopt(bond_reach,'bond_reach',db,errcount=nerr,min=0.,default=bond_reach)
+ call read_inopt(bond_lambda,'bond_lambda',db,errcount=nerr,min=tiny(0.),default=bond_lambda)
+ call read_inopt(bond_sigma_pa,'bond_sigma_pa',db,errcount=nerr,min=0.,default=bond_sigma_pa)
+ call read_inopt(bond_tau_pa,'bond_tau_pa',db,errcount=nerr,min=0.,default=bond_tau_pa)
  call read_inopt(rho_crit_cgs,'rho_crit_cgs',db,errcount=nerr,min=0.,default=rho_crit_cgs)
  call read_inopt(r_crit,'r_crit',db,errcount=nerr,min=0.,default=r_crit)
  call read_inopt(h_acc,'h_acc',db,errcount=nerr,min=0.,default=h_acc)

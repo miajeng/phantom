@@ -95,6 +95,20 @@ module part
 !  for rolling and twisting resistance; same slots and life cycle as xi
  real,            allocatable :: rotcontact(:,:,:),rotcontact_new(:,:,:)
 !
+!--DEM boulder (clump) bonds: for each grain, up to maxbond bonded
+!  partners (by iorig, 0 = empty) with the bond's shear displacement
+!  (xibond) and bending (1:3) and twisting (4) angles (rotbond). Bonds are
+!  made once, between grains of the same clump within bond_reach, and a
+!  broken bond is gone for good. Same trial/commit cycle as the contacts.
+!  The partner lists are written to dumps; dem_bonds_formed says they
+!  exist (read from a dump, or made by the first force evaluation).
+!
+ integer, parameter :: maxbond = 16
+ integer(kind=8), allocatable :: ibond(:,:),ibond_new(:,:)
+ real,            allocatable :: xibond(:,:,:),xibond_new(:,:,:)
+ real,            allocatable :: rotbond(:,:,:),rotbond_new(:,:,:)
+ logical :: dem_bonds_formed = .false.
+!
 !--storage of dust properties
 !
  real :: grainsize(maxdusttypes)
@@ -616,6 +630,12 @@ subroutine deallocate_part
  if (allocated(xicontact_new)) deallocate(xicontact_new)
  if (allocated(rotcontact))     deallocate(rotcontact)
  if (allocated(rotcontact_new)) deallocate(rotcontact_new)
+ if (allocated(ibond))          deallocate(ibond)
+ if (allocated(ibond_new))      deallocate(ibond_new)
+ if (allocated(xibond))         deallocate(xibond)
+ if (allocated(xibond_new))     deallocate(xibond_new)
+ if (allocated(rotbond))        deallocate(rotbond)
+ if (allocated(rotbond_new))    deallocate(rotbond_new)
  if (allocated(iseed_sink))   deallocate(iseed_sink)
  if (allocated(dustprop))     deallocate(dustprop)
  if (allocated(dustgasprop))  deallocate(dustgasprop)
@@ -817,6 +837,30 @@ subroutine allocate_dem_contacts
  rotcontact_new = 0.
 
 end subroutine allocate_dem_contacts
+
+!----------------------------------------------------------------
+!+
+!  allocate the DEM bond lists, once, when clump bonds are first used
+!+
+!----------------------------------------------------------------
+subroutine allocate_dem_bonds
+ use allocutils, only:allocate_array
+
+ if (allocated(ibond)) return
+ ! allocutils has no 2D integer(kind=8) routine, so the IDs use allocate
+ allocate(ibond(maxbond,maxp),ibond_new(maxbond,maxp))
+ call allocate_array('xibond', xibond, 3, maxbond, maxp)
+ call allocate_array('xibond_new', xibond_new, 3, maxbond, maxp)
+ call allocate_array('rotbond', rotbond, 4, maxbond, maxp)
+ call allocate_array('rotbond_new', rotbond_new, 4, maxbond, maxp)
+ ibond = 0
+ ibond_new = 0
+ xibond = 0.
+ xibond_new = 0.
+ rotbond = 0.
+ rotbond_new = 0.
+
+end subroutine allocate_dem_bonds
 
 !----------------------------------------------------------------
 !+
@@ -1390,6 +1434,14 @@ subroutine copy_particle(src,dst,new_part)
     rotcontact(:,:,dst)     = rotcontact(:,:,src)
     rotcontact_new(:,:,dst) = rotcontact_new(:,:,src)
  endif
+ if (allocated(ibond)) then
+    ibond(:,dst)         = ibond(:,src)
+    ibond_new(:,dst)     = ibond_new(:,src)
+    xibond(:,:,dst)      = xibond(:,:,src)
+    xibond_new(:,:,dst)  = xibond_new(:,:,src)
+    rotbond(:,:,dst)     = rotbond(:,:,src)
+    rotbond_new(:,:,dst) = rotbond_new(:,:,src)
+ endif
 
 end subroutine copy_particle
 
@@ -1514,6 +1566,14 @@ subroutine copy_particle_all(src,dst,new_part)
     xicontact_new(:,:,dst) = xicontact_new(:,:,src)
     rotcontact(:,:,dst)     = rotcontact(:,:,src)
     rotcontact_new(:,:,dst) = rotcontact_new(:,:,src)
+ endif
+ if (allocated(ibond)) then
+    ibond(:,dst)         = ibond(:,src)
+    ibond_new(:,dst)     = ibond_new(:,src)
+    xibond(:,:,dst)      = xibond(:,:,src)
+    xibond_new(:,:,dst)  = xibond_new(:,:,src)
+    rotbond(:,:,dst)     = rotbond(:,:,src)
+    rotbond_new(:,:,dst) = rotbond_new(:,:,src)
  endif
 
 end subroutine copy_particle_all

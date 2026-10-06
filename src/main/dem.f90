@@ -30,7 +30,8 @@ module dem
 !              Zhang+2017, Icarus 294, 98-123 (rolling/twisting resistance);
 !              Cundall & Strack 1979, Geotechnique 29, 47-65;
 !              Luding 2008, Granular Matter 10, 235-246 (sliding projection);
-!              Zhang+2018, ApJ 857, 15; Hu+2021, MNRAS 502, 5277 (cohesion)
+!              Zhang+2018, ApJ 857, 15; Hu+2021, MNRAS 502, 5277 (cohesion);
+!              Potyondy & Cundall 2004, IJRMMS 41, 1329-1364 (parallel bonds)
 !
 ! Two cohesion models (use one):
 !
@@ -54,13 +55,25 @@ module dem
 ! xi, so a contact can stick (static friction) until |F_t| reaches
 ! mu_s*|F_n|, then slides. The history lives in part (icontact, xicontact).
 !
-! Optional clump bonds glue grains into boulders: two grains with the same
-! nonzero clump ID (part%iclump) feel a two-sided spring toward touching,
-! r = R_i + R_j, so a clump holds its shape in tension and compression.
-! Grains are equal spheres, so the rest length is the same for every bond
-! and no bond list is stored. The price is that there is no bond memory: a
-! bond stretched past bond_reach stops pulling (the boulder breaks there),
-! but re-forms if the same two grains come back within reach.
+! Optional clump bonds glue grains into boulders, as parallel bonds
+! (Potyondy & Cundall 2004). Bonds are made once, by the first force
+! evaluation, between grains with the same nonzero clump ID (part%iclump)
+! whose surface gap is below bond_reach*(R_i+R_j); each grain keeps a list
+! of its bonded partners (part%ibond), written to dumps. A bond is a disc
+! of radius r_b = bond_lambda*min(R_i,R_j) (area A, second moments
+! I = pi r_b^4/4, J = 2I) joining the two grains, and carries
+!   tension/compression  F_n = kb*(R_i+R_j-r), rest length touching
+!   shear                F_s = -k_bs*xi_b,    k_bs = (2/7) kb
+!   bending              M_b = -kb*(I/A)*th_b
+!   twisting             M_t = -k_bs*(J/A)*th_t
+! each with a dashpot, from the shear displacement and the bending and
+! twisting angles accumulated since the bond was made. It breaks, for good,
+! when the tensile stress  sigma = -F_n/A + |M_b| r_b/I  exceeds
+! bond_sigma_pa, or the shear stress  tau = |F_s|/A + |M_t| r_b/J  exceeds
+! bond_tau_pa (Potyondy & Cundall 2004, Eq. 6), or when stretched past
+! bond_reach. Strengths of 0 switch that criterion off, leaving the stretch
+! limit alone. A broken bond leaves an ordinary contact: friction and
+! cohesion then apply. A bonded pair feels no contact friction.
 !
 ! :Owner: Daniel Price
 !
@@ -68,7 +81,7 @@ module dem
  private
 
  public :: get_ssdem_force,dem_cohesion_summary,get_dem_dt,dem_friction_on,dem_friction_summary
- public :: get_fcoh,dem_contact_check
+ public :: get_fcoh,dem_contact_check,dem_commit_history,dem_bonds_on
 
  real, public :: C_dem = 0.1          ! Safety factor on the contact timestep
  real, public :: epsilon_n_dem = 0.5  ! Normal coefficient of restitution (user-settable)
@@ -84,6 +97,10 @@ module dem
  real, public :: coh_gap_max_cgs = 0. ! Max surface gap (cm) for cohesive bond; 0 = use 1% of mean radius
  real, public :: kb_cgs = 0.          ! Clump bond spring constant (g/s^2 per cm stretch); 0 = no clumps
  real, public :: bond_reach = 0.1     ! Max surface gap for a clump bond, as a fraction of R_i + R_j
+ real, public :: bond_lambda = 1.     ! Bond radius as a fraction of the smaller grain radius
+ real, public :: bond_sigma_pa = 0.   ! Bond tensile strength (Pa); 0 = no stress criterion
+ real, public :: bond_tau_pa = 0.     ! Bond shear strength (Pa); 0 = no stress criterion
+ logical, public :: dem_bonds_forming = .false.  ! true only for the force evaluation that makes the bonds
 
 contains
 
@@ -98,7 +115,8 @@ subroutine get_ssdem_force(Rsinki,Rsinkj,mi,mj,ddr,dx,dy,dz,fx,fy,fz,veli,velj,w
  use physcon,     only:pi
  use vectorutils, only:cross_product
  use units,       only:umass,utime,udist
- use part,        only:maxcontact,icontact,xicontact,icontact_new,xicontact_new,rotcontact,rotcontact_new
+ use part,        only:maxcontact,icontact,xicontact,icontact_new,xicontact_new,rotcontact,rotcontact_new,&
+                       maxbond,ibond,ibond_new,xibond,xibond_new,rotbond,rotbond_new
  use io,          only:fatal
  real, intent(in)    :: Rsinki,Rsinkj,mi,mj,ddr,dx,dy,dz,veli(3),velj(3),wi(3),wj(3)
  real, intent(inout) :: fx,fy,fz,dtmin
@@ -109,7 +127,9 @@ subroutine get_ssdem_force(Rsinki,Rsinkj,mi,mj,ddr,dx,dy,dz,fx,fy,fz,veli,velj,w
  real,            intent(in), optional :: dt     ! step over which the contact history advances
  real :: ks,cs,log_epsilon_t_dem,fn,ftmax,ftmag,xi0mag,xi(3),fcoh
  real :: rbar,wrel(3),wrol(3),wtw,rol(3),rol0mag,tw,kr,cr,ktw,ctw,mr(3),mrmax,mrmag,mt,mtmax
- integer :: k,kfree,kold
+ integer :: k,kfree,kold,kbond
+ real :: xib(3),rob(3),twb,rb,ab,ib,jb,kbs,cbn,cbs,mrb(3),mtb,sig,tau,ftb(3)
+ logical :: bond_hist
  real :: r,overlap,gap,kn,kn_dem,kt_dem,kb_dem,coh_gap_max
  logical :: is_bond
  real :: cn,reduced_mass,log_epsilon_n_dem,li,lj
@@ -130,8 +150,89 @@ subroutine get_ssdem_force(Rsinki,Rsinkj,mi,mj,ddr,dx,dy,dz,fx,fy,fz,veli,velj,w
  kn_dem = kn_cgs / (umass/utime**2)  ! convert to code units
  kt_dem = kt_cgs / (umass/utime**2)
  kb_dem = kb_cgs / (umass/utime**2)
- is_bond = .false.
- if (present(bonded)) is_bond = bonded .and. kb_dem > 0. .and. gap < bond_reach*(Rsinki + Rsinkj)
+
+ ! Cross products: n x omega, where omega is the spin vector of the sphere
+ n_cross_wi = cross_product(nvec,wi)
+ n_cross_wj = cross_product(nvec,wj)
+
+ ! Eqs. (9) and (10)from Schwartz+2012
+ li = (Rsinki**2 - Rsinkj**2 + r**2) / (2.0 * r)
+ lj = (Rsinkj**2 - Rsinki**2 + r**2) / (2.0 * r)
+
+ ! Relative velocity at contact point (Eq. 8 from Schwartz+2012).
+ ! nvec points from j to i, so the contact point is at x_i - li*nvec on i
+ ! and x_j + lj*nvec on j, moving at v_i + li*(n x w_i) and v_j - lj*(n x w_j).
+ ! Both spin terms therefore enter with a plus sign: with a minus on the
+ ! j term, two touching grains rotating rigidly together would show a
+ ! spurious sliding velocity. (Harmless until now, as spins were zero.)
+ vrel = veli - velj + li * n_cross_wi + lj * n_cross_wj
+
+ ! Normal and tangential components
+ u_dot_n = dot_product(vrel, nvec)
+ u_n = u_dot_n * nvec
+ u_t = vrel - u_n
+
+ reduced_mass = mj *  mi / (mj + mi)
+
+ !----------------------------------------------------------------
+ ! Clump bond: is there one, and does it hold?
+ !----------------------------------------------------------------
+ is_bond   = .false.
+ bond_hist = present(i) .and. present(jorig) .and. present(dt)
+ if (present(bonded)) then
+    if (bonded .and. kb_dem > 0.) then
+       if (bond_hist .and. allocated(ibond)) then
+          kbond = 0
+          do k=1,maxbond
+             if (ibond(k,i) == jorig) then
+                kbond = k
+                exit
+             endif
+          enddo
+          if (kbond > 0 .or. (dem_bonds_forming .and. gap < bond_reach*(Rsinki + Rsinkj))) then
+             ! bond springs at the start of the step (zero for a bond being made),
+             ! turned with the pair into the current tangent plane, then advanced
+             xib = 0.; rob = 0.; twb = 0.
+             if (kbond > 0) then
+                xib = xibond(:,kbond,i)
+                rob = rotbond(1:3,kbond,i)
+                twb = rotbond(4,kbond,i)
+             endif
+             call turn_into_plane(xib,nvec)
+             call turn_into_plane(rob,nvec)
+             wrel = wi - wj
+             wtw  = dot_product(wrel,nvec)
+             wrol = wrel - wtw * nvec
+             xib  = xib + u_t * dt
+             rob  = rob + wrol * dt
+             twb  = twb + wtw * dt
+
+             rb  = bond_lambda * min(Rsinki,Rsinkj)
+             ab  = pi * rb**2
+             ib  = 0.25 * pi * rb**4
+             jb  = 2. * ib
+             kbs = (2./7.) * kb_dem
+             log_epsilon_n_dem = log(epsilon_n_dem)
+             log_epsilon_t_dem = log(epsilon_t_dem)
+             cbn = -2.0 * sqrt(reduced_mass * kb_dem) * log_epsilon_n_dem / sqrt(pi**2 + log_epsilon_n_dem**2)
+             cbs = -2.0 * sqrt(reduced_mass * kbs) * log_epsilon_t_dem / sqrt(pi**2 + log_epsilon_t_dem**2)
+             ftb = -kbs * xib - cbs * u_t
+             mrb = -kb_dem * (ib/ab) * rob - cbn * (ib/ab) * wrol
+             mtb = -kbs * (jb/ab) * twb - cbs * (jb/ab) * wtw
+
+             ! peak stresses in the bond from its springs (tension positive)
+             sig = -kb_dem * overlap / ab + kb_dem * sqrt(dot_product(rob,rob)) * rb / ab
+             tau = kbs * (sqrt(dot_product(xib,xib)) + abs(twb) * rb) / ab
+             is_bond = (gap < bond_reach*(Rsinki + Rsinkj))
+             if (bond_sigma_pa > 0.) is_bond = is_bond .and. sig <= stress_code(bond_sigma_pa)
+             if (bond_tau_pa > 0.)   is_bond = is_bond .and. tau <= stress_code(bond_tau_pa)
+          endif
+       else
+          ! no bond memory available (e.g. no history passed): stretch limit only
+          is_bond = gap < bond_reach*(Rsinki + Rsinkj)
+       endif
+    endif
+ endif
  if (coh_gap_max_cgs > 0.) then
     coh_gap_max = coh_gap_max_cgs / udist
  else
@@ -173,29 +274,7 @@ subroutine get_ssdem_force(Rsinki,Rsinkj,mi,mj,ddr,dx,dy,dz,fx,fy,fz,veli,velj,w
  ! Damping force
  !----------------------------------------------------------------
 
- ! Cross products: n x omega, where omega is the spin vector of the sphere
- n_cross_wi = cross_product(nvec,wi)
- n_cross_wj = cross_product(nvec,wj)
-
- ! Eqs. (9) and (10)from Schwartz+2012
- li = (Rsinki**2 - Rsinkj**2 + r**2) / (2.0 * r)
- lj = (Rsinkj**2 - Rsinki**2 + r**2) / (2.0 * r)
-
- ! Relative velocity at contact point (Eq. 8 from Schwartz+2012).
- ! nvec points from j to i, so the contact point is at x_i - li*nvec on i
- ! and x_j + lj*nvec on j, moving at v_i + li*(n x w_i) and v_j - lj*(n x w_j).
- ! Both spin terms therefore enter with a plus sign: with a minus on the
- ! j term, two touching grains rotating rigidly together would show a
- ! spurious sliding velocity. (Harmless until now, as spins were zero.)
- vrel = veli - velj + li * n_cross_wi + lj * n_cross_wj
-
- ! Normal and tangential components
- u_dot_n = dot_product(vrel, nvec)
- u_n = u_dot_n * nvec
- u_t = vrel - u_n
-
  ! Eqn (15) from Schwartz+2012
- reduced_mass = mj *  mi / (mj + mi)
  log_epsilon_n_dem = log(epsilon_n_dem)
  cn = -2.0 * sqrt(reduced_mass * kn) * log_epsilon_n_dem / sqrt(pi**2 + log_epsilon_n_dem**2)
 
@@ -228,7 +307,7 @@ subroutine get_ssdem_force(Rsinki,Rsinkj,mi,mj,ddr,dx,dy,dz,fx,fy,fz,veli,velj,w
  ! opposite to roundoff and the pair forces obey Newton's third law.
  !
  ft = 0.
- if (present(i) .and. present(jorig) .and. present(dt) .and. mu_s > 0. .and. overlap > 0.) then
+ if (bond_hist .and. .not.is_bond .and. mu_s > 0. .and. overlap > 0.) then
     if (ks_cgs > 0.) then
        ks = ks_cgs / (umass/utime**2)
     else
@@ -342,6 +421,26 @@ subroutine get_ssdem_force(Rsinki,Rsinkj,mi,mj,ddr,dx,dy,dz,fx,fy,fz,veli,velj,w
     rotcontact_new(4,kfree,i)   = tw
  endif
  !
+ ! an intact bond: its shear force goes on as ft, its bending and twisting
+ ! couples straight onto the spin, and it is recorded in the trial list
+ !
+ if (is_bond .and. bond_hist .and. allocated(ibond)) then
+    ft = ftb
+    if (present(dwi)) dwi = dwi + (mrb + mtb * nvec) / (0.4 * mi * Rsinki**2)
+    kfree = 0
+    do k=1,maxbond
+       if (ibond_new(k,i) == 0) then
+          kfree = k
+          exit
+       endif
+    enddo
+    if (kfree == 0) call fatal('dem','more than maxbond bonds on one grain',var='maxbond',ival=maxbond)
+    ibond_new(kfree,i)      = jorig
+    xibond_new(:,kfree,i)   = xib
+    rotbond_new(1:3,kfree,i) = rob
+    rotbond_new(4,kfree,i)   = twb
+ endif
+ !
  ! ft acts at the contact point, so it also spins i up:
  ! torque = (-li*nvec) x ft, over I = 2/5 mi Ri^2
  !
@@ -388,6 +487,120 @@ real function get_dem_dt(mass_dem)
  endif
 
 end function get_dem_dt
+
+!----------------------------------------------------------------
+!+
+!  turn a vector into the plane normal to nvec, keeping its length
+!  (how a spring displacement follows a pair that rolls round itself)
+!+
+!----------------------------------------------------------------
+pure subroutine turn_into_plane(v,nvec)
+ real, intent(inout) :: v(3)
+ real, intent(in)    :: nvec(3)
+ real :: v0,v1
+
+ v0 = sqrt(dot_product(v,v))
+ if (v0 > 0.) then
+    v  = v - dot_product(v,nvec) * nvec
+    v1 = sqrt(dot_product(v,v))
+    if (v1 > 0.) v = v * (v0 / v1)
+ endif
+
+end subroutine turn_into_plane
+
+!----------------------------------------------------------------
+!+
+!  a stress in Pa, in code units
+!+
+!----------------------------------------------------------------
+real function stress_code(pa)
+ use units, only:umass,udist,utime
+ real, intent(in) :: pa
+
+ stress_code = 10.*pa / (umass/(udist*utime**2))
+
+end function stress_code
+
+!----------------------------------------------------------------
+!+
+!  True if boulders are glued: clump bonds on and a clump in the body
+!+
+!----------------------------------------------------------------
+logical function dem_bonds_on(npart)
+ use part, only:iclump
+ integer, intent(in) :: npart
+
+ dem_bonds_on = (kb_cgs > 0.)
+ if (dem_bonds_on) dem_bonds_on = any(iclump(1:npart) /= 0)
+
+end function dem_bonds_on
+
+!----------------------------------------------------------------
+!+
+!  End of a converged step (or of the force evaluation that made the
+!  bonds): commit the trial contact and bond lists built by the force.
+!  A bond is kept only if both grains still list each other, so the
+!  rare bond judged broken by one grain and not the other (roundoff at
+!  the threshold) breaks for both, as do bonds to accreted grains.
+!+
+!----------------------------------------------------------------
+subroutine dem_commit_history(npart,xyzh)
+ use part, only:icontact,icontact_new,xicontact,xicontact_new,rotcontact,rotcontact_new,&
+                ibond,ibond_new,xibond,xibond_new,rotbond,rotbond_new,iorig,isdead_or_accreted,maxbond
+ integer, intent(in) :: npart
+ real,    intent(in) :: xyzh(:,:)
+ integer, allocatable, save :: imap(:)
+ integer(kind=8) :: jo,maxid
+ integer :: i,j,k
+
+ if (allocated(icontact)) then
+    !$omp parallel do default(none) shared(npart,icontact,icontact_new,xicontact,xicontact_new) &
+    !$omp shared(rotcontact,rotcontact_new) private(i)
+    do i=1,npart
+       icontact(:,i)     = icontact_new(:,i)
+       xicontact(:,:,i)  = xicontact_new(:,:,i)
+       rotcontact(:,:,i) = rotcontact_new(:,:,i)
+    enddo
+    !$omp end parallel do
+ endif
+
+ if (allocated(ibond)) then
+    !$omp parallel do default(none) shared(npart,ibond,ibond_new,xibond,xibond_new) &
+    !$omp shared(rotbond,rotbond_new) private(i)
+    do i=1,npart
+       ibond(:,i)     = ibond_new(:,i)
+       xibond(:,:,i)  = xibond_new(:,:,i)
+       rotbond(:,:,i) = rotbond_new(:,:,i)
+    enddo
+    !$omp end parallel do
+    !
+    ! keep only mutual bonds
+    !
+    maxid = maxval(iorig(1:npart))
+    if (allocated(imap)) then
+       if (size(imap,kind=8) < maxid) deallocate(imap)
+    endif
+    if (.not.allocated(imap)) allocate(imap(maxid))
+    imap(1:maxid) = 0
+    do i=1,npart
+       if (.not.isdead_or_accreted(xyzh(4,i))) imap(iorig(i)) = i
+    enddo
+    do i=1,npart
+       do k=1,maxbond
+          jo = ibond(k,i)
+          if (jo == 0) cycle
+          j = 0
+          if (jo <= maxid) j = imap(jo)
+          if (j == 0) then
+             ibond(k,i) = 0
+          elseif (.not.any(ibond(:,j) == iorig(i))) then
+             ibond(k,i) = 0
+          endif
+       enddo
+    enddo
+ endif
+
+end subroutine dem_commit_history
 
 !----------------------------------------------------------------
 !+
@@ -483,6 +696,9 @@ subroutine dem_cohesion_summary
     write(iprint,"(/,a)") ' DEM clump bonds enabled'
     write(iprint,"(a,1pg12.4,a)") '   kb_cgs = ',kb_cgs,' g/s^2 per cm stretch'
     write(iprint,"(a,1pg12.4,a)") '   bond_reach = ',bond_reach,' x (R_i + R_j) surface gap'
+    write(iprint,"(a,1pg12.4,a)") '   bond radius = ',bond_lambda,' x min(R_i,R_j)'
+    if (bond_sigma_pa > 0.) write(iprint,"(a,1pg12.4,a)") '   tensile strength = ',bond_sigma_pa,' Pa'
+    if (bond_tau_pa > 0.)   write(iprint,"(a,1pg12.4,a)") '   shear strength   = ',bond_tau_pa,' Pa'
  endif
  if (kt_cgs <= 0.) return
  kt_dem = kt_cgs / (umass/utime**2)
