@@ -33,7 +33,7 @@ module analysis
 contains
 
 subroutine do_analysis(dumpfile,num,xyzh,vxyzu,particlemass,npart,time,iunit)
- use part,         only:nptmass,xyzmh_ptmass,vxyz_ptmass,isdead_or_accreted
+ use part,         only:nptmass,xyzmh_ptmass,vxyz_ptmass,isdead_or_accreted,massoftype,idem,npartoftype
  use centreofmass, only:get_centreofmass
  use units,        only:udist,utime
  use physcon,      only:pi,km
@@ -43,7 +43,7 @@ subroutine do_analysis(dumpfile,num,xyzh,vxyzu,particlemass,npart,time,iunit)
  real,             intent(in) :: particlemass,time
  real    :: xpos(3),vpos(3),dx(3)
  real    :: inert(3,3),eig(3),semi(3),rgrain,rmax,vgrain,phi,vbody
- real    :: funbound
+ real    :: funbound,pmass_grain
  integer :: i,j,k,nlive
  logical :: iexist
  character(len=200) :: fileout
@@ -100,7 +100,12 @@ subroutine do_analysis(dumpfile,num,xyzh,vxyzu,particlemass,npart,time,iunit)
  !
  ! energy-based unbound fraction, iterated onto the largest remnant
  !
- call get_unbound_fraction(npart,xyzh,vxyzu,particlemass,funbound)
+ ! phantomanalysis passes massoftype(1), the gas mass, which is zero in a
+ ! DEM-only run: get_unbound_fraction then returned 0 without computing
+ ! anything. Use the DEM grain mass instead.
+ pmass_grain = particlemass
+ if (pmass_grain <= 0. .and. npartoftype(idem) > 0) pmass_grain = massoftype(idem)
+ call get_unbound_fraction(npart,xyzh,vxyzu,pmass_grain,funbound)
 
  fileout = trim(dumpfile(1:index(dumpfile,'_')-1))//'_shape.dat'
  inquire(file=fileout,exist=iexist)
